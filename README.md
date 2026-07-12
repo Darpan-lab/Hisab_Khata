@@ -58,7 +58,7 @@ Make sure your server has the following installed:
 
 ---
 
-### Method A: Automated Quick Setup (Recommended)
+### Method A: Automated Quick Setup (Not Tested Yet!)
 
 To run the interactive automated setup script which handles dependency checking, package installation, environment variable creation, client compilation, and optional systemd background service registration:
 
