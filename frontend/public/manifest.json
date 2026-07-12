@@ -1,0 +1,23 @@
+{
+  "short_name": "Hisab Khata",
+  "name": "Hisab Khata - Expense Tracker",
+  "icons": [
+    {
+      "src": "/favicon.svg?v=4",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg?v=4",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "display": "standalone",
+  "orientation": "portrait"
+}
