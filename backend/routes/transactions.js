@@ -101,7 +101,28 @@ router.post('/', protect, async (req, res) => {
         if (date) {
           if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             const [yr, mo, dy] = date.split('-').map(Number);
-            return new Date(Date.UTC(yr, mo - 1, dy, 0, 0, 0, 0));
+            const now = new Date();
+            const formatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: 'Asia/Dhaka',
+              hour: 'numeric',
+              minute: 'numeric',
+              second: 'numeric',
+              fractionalSecondDigits: 3,
+              hour12: false
+            });
+            const parts = formatter.formatToParts(now);
+            const comps = {};
+            for (const part of parts) {
+              comps[part.type] = part.value;
+            }
+            const hr = Number(comps.hour) || 0;
+            const min = Number(comps.minute) || 0;
+            const sec = Number(comps.second) || 0;
+            const ms = Number(comps.fractionalSecond) || 0;
+
+            // Asia/Dhaka is UTC+6
+            const utcMillis = Date.UTC(yr, mo - 1, dy, hr, min, sec, ms);
+            return new Date(utcMillis - (6 * 60 * 60 * 1000));
           }
           return new Date(date);
         }

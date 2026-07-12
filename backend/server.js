@@ -24,6 +24,11 @@ app.use(express.json());
 // Serve static files from frontend build
 app.use(express.static(path.join(__dirname, '../frontend/dist')));
 
+// Return 404 for missing assets in /assets to prevent serving index.html
+app.use('/assets', (req, res) => {
+  res.status(404).send('Asset not found');
+});
+
 // Mount Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/categories', require('./routes/categories'));
