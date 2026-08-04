@@ -83,3 +83,68 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// Push Event Listener for Web Push Notifications
+self.addEventListener('push', (event) => {
+  let payload = {
+    notification: {
+      title: 'Hisab Khata',
+      body: 'New activity in your shared group!',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      vibrate: [100, 50, 100],
+      data: { url: '/' }
+    }
+  };
+
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch (err) {
+      payload = {
+        notification: {
+          title: 'Hisab Khata',
+          body: event.data.text(),
+          icon: '/favicon.svg',
+          badge: '/favicon.svg',
+          data: { url: '/' }
+        }
+      };
+    }
+  }
+
+  const options = {
+    body: payload.notification.body,
+    icon: payload.notification.icon || '/favicon.svg',
+    badge: payload.notification.badge || '/favicon.svg',
+    vibrate: payload.notification.vibrate || [100, 50, 100],
+    data: payload.notification.data || { url: '/' }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(payload.notification.title, options)
+  );
+});
+
+// Notification Click Listener
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Find if there's already a window open with this domain
+      for (const client of clientList) {
+        if ('focus' in client) {
+          // Send user to targetUrl or just focus the window
+          return client.focus();
+        }
+      }
+      // If no window is open, open a new one
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+    })
+  );
+});

@@ -6,6 +6,7 @@ const Category = require('../models/Category');
 const Group = require('../models/Group');
 const { syncWithGoogleSheet } = require('../utils/sheetSync');
 const { generateCostAnalysisPDF } = require('../utils/pdfGenerator');
+const { notifyGroupMembers } = require('./notificationService');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = TELEGRAM_TOKEN ? `https://api.telegram.org/bot${TELEGRAM_TOKEN}` : '';
@@ -607,6 +608,13 @@ const handleMessage = async (message) => {
     syncWithGoogleSheet(user, transaction, 'add', targetGroup).catch(err => {
       console.error('Google Sheet sync failed for telegram transaction:', err.message);
     });
+
+    // Notify group members in the background
+    if (targetGroup) {
+      notifyGroupMembers(targetGroup._id, transaction, 'cost_added', user._id).catch(err => {
+        console.error('Background group notification error for telegram transaction:', err.message);
+      });
+    }
 
     let successMsg = `✅ *Expense Added!*\n\n📝 *Item:* ${parsed.itemName}\n💰 *Price:* ${parsed.cost} Tk\n📁 *Category:* ${categoryName}\n📅 *Time:* ${new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit', hour12: true })}`;
     if (targetGroup) {

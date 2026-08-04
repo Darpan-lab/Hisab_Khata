@@ -274,15 +274,20 @@ router.put('/profile', protect, async (req, res) => {
       user.activeTelegramGroup = activeTelegramGroup || null;
     }
 
-    // If changing password, verify current password and hash new password
+    // If changing password, verify current password (unless user is an admin) and hash new password
     if (newPassword) {
-      if (!currentPassword) {
-        return res.status(400).json({ success: false, message: 'Please provide your current password to set a new password' });
-      }
+      const isAdmin = (user.role && user.role.toLowerCase() === 'admin') || 
+                      (user.username && user.username.toLowerCase() === 'rkdarpan');
 
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ success: false, message: 'Incorrect current password' });
+      if (!isAdmin) {
+        if (!currentPassword) {
+          return res.status(400).json({ success: false, message: 'Please provide your current password to set a new password' });
+        }
+
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+          return res.status(400).json({ success: false, message: 'Incorrect current password' });
+        }
       }
 
       if (newPassword.length < 6) {
@@ -427,6 +432,37 @@ router.put('/toggle-signup', protect, async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, message: 'Server error toggling signup' });
+  }
+});
+
+// @route   PUT api/auth/users/:id/password
+// @desc    Set new password for another user (Admin only)
+// @access  Private
+router.put('/users/:id/password', protect, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.username !== 'rkdarpan') {
+      return res.status(403).json({ success: false, message: 'Access denied: Admin only' });
+    }
+
+    const { password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
+    }
+
+    const userToUpdate = await User.findById(req.params.id);
+    if (!userToUpdate) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    userToUpdate.password = await bcrypt.hash(password, salt);
+    await userToUpdate.save();
+
+    res.json({ success: true, message: `Password for ${userToUpdate.username} updated successfully` });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ success: false, message: 'Server error setting user password' });
   }
 });
 

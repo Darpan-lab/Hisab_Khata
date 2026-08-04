@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Group = require('../models/Group');
 const Transaction = require('../models/Transaction');
+const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 const { protect } = require('../middleware/auth');
 
 // Generate a random unique invite code (6 characters)
@@ -176,6 +178,12 @@ router.post('/:id/leave', protect, async (req, res) => {
 // @access  Private
 router.delete('/:id', protect, async (req, res) => {
   try {
+    const password = req.body.password || (req.headers['x-confirm-password'] ? decodeURIComponent(req.headers['x-confirm-password']) : null);
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Please enter your password to confirm group deletion' });
+    }
+
     const group = await Group.findById(req.params.id);
 
     if (!group) {
@@ -185,6 +193,17 @@ router.delete('/:id', protect, async (req, res) => {
     // Check if owner
     if (group.owner.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this group' });
+    }
+
+    // Verify user password
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect password. Group deletion aborted.' });
     }
 
     // Delete all transactions associated with this group

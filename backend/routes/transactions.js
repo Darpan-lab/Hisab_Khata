@@ -8,6 +8,7 @@ const { protect } = require('../middleware/auth');
 
 const { syncWithGoogleSheet } = require('../utils/sheetSync');
 const { generateCostAnalysisPDF } = require('../utils/pdfGenerator');
+const { notifyGroupMembers } = require('../services/notificationService');
 
 
 // @route   GET api/transactions/report/pdf
@@ -142,6 +143,13 @@ router.post('/', protect, async (req, res) => {
       console.error('Background Google Sheet sync error:', err.message);
     });
 
+    // Notify group members in the background
+    if (groupId) {
+      notifyGroupMembers(groupId, transaction, 'cost_added', req.user.id).catch(err => {
+        console.error('Background group notification error:', err.message);
+      });
+    }
+
     // Populate transaction before sending back
     const populatedTransaction = await Transaction.findById(transaction._id)
       .populate('user', 'username email profilePic')
@@ -199,6 +207,13 @@ router.delete('/:id', protect, async (req, res) => {
     syncWithGoogleSheet(transactionCreator || req.user, transaction, 'delete', group).catch(err => {
       console.error('Background Google Sheet deletion sync error:', err.message);
     });
+
+    // Notify group members of deletion in the background
+    if (transaction.group) {
+      notifyGroupMembers(transaction.group, transaction, 'cost_deleted', req.user.id).catch(err => {
+        console.error('Background group notification error (deletion):', err.message);
+      });
+    }
 
     // Remove from MongoDB
     await transaction.deleteOne();

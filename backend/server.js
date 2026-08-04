@@ -34,6 +34,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/categories', require('./routes/categories'));
 app.use('/api/transactions', require('./routes/transactions'));
 app.use('/api/groups', require('./routes/groups'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 // Wildcard route to serve index.html for frontend
 app.get('*', (req, res) => {

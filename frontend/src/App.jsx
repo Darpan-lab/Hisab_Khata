@@ -38,9 +38,11 @@ import {
   RefreshCw,
   UserMinus,
   Eye,
+  EyeOff,
   Shield,
   ArrowLeft,
-  PieChart
+  PieChart,
+  Bell
 } from 'lucide-react';
 
 const API_BASE = '/api';
@@ -79,6 +81,8 @@ function App() {
   };
   const [activeTab, setActiveTab] = useState('track'); // 'track', 'history', 'groups', 'settings'
   const [authMode, setAuthMode] = useState('login'); // 'login', 'signup'
+  const [showPassword, setShowPassword] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'midnight');
 
   // Helper to get local date string in YYYY-MM-DD format
   const getLocalDateString = () => {
@@ -125,6 +129,16 @@ function App() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminSignupPaused, setAdminSignupPaused] = useState(false);
+  const [passwordResetUser, setPasswordResetUser] = useState(null); // { id, username }
+  const [newPasswordForUser, setNewPasswordForUser] = useState('');
+  const [passwordSubmitLoading, setPasswordSubmitLoading] = useState(false);
+
+  // Notification & PWA Push States
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  const [showNotificationsTray, setShowNotificationsTray] = useState(false);
+  const [isSubscribedToPush, setIsSubscribedToPush] = useState(false);
+  const [isPushLoading, setIsPushLoading] = useState(false);
 
   // Fetch signup status on mount
   useEffect(() => {
@@ -140,6 +154,14 @@ function App() {
     };
     fetchSignupStatus();
   }, []);
+  
+  // Apply selected theme class to document root element
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('theme-midnight', 'theme-emerald', 'theme-cyberpunk', 'theme-minimalist');
+    root.classList.add(`theme-${theme}`);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // Sync profile editing form when user state changes
   useEffect(() => {
@@ -202,9 +224,11 @@ function App() {
   };
   
   // Custom Confirm Modal State
-  const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm }
-  const showConfirm = (message, onConfirm) => {
-    setConfirmModal({ message, onConfirm });
+  const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm, requiresPassword }
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const showConfirm = (message, onConfirm, requiresPassword = false) => {
+    setConfirmPassword('');
+    setConfirmModal({ message, onConfirm, requiresPassword });
   };
 
   // Group Details & Budget Analytics States
@@ -388,13 +412,31 @@ function App() {
   useEffect(() => {
     if (token) {
       fetchData();
+      fetchNotifications();
       if (user) {
         setSheetUrlForm(user.sheetUrl || '');
       }
+
+      // Check active device push subscription
+      const checkSubscription = async () => {
+        if ('serviceWorker' in navigator) {
+          try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.getSubscription();
+            setIsSubscribedToPush(!!sub);
+          } catch (e) {
+            console.error('Error checking push subscription:', e);
+          }
+        }
+      };
+      checkSubscription();
     } else {
       setTransactions([]);
       setCategories([]);
       setGroups([]);
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+      setIsSubscribedToPush(false);
     }
   }, [token]);
 
@@ -411,6 +453,126 @@ function App() {
     const interval = setInterval(handleInterval, 5000);
     return () => clearInterval(interval);
   }, [token]);
+
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+      .replace(/\-/g, '+')
+      .replace(/_/g, '/');
+
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const fetchNotifications = async () => {
+    if (!token || !navigator.onLine) return;
+    try {
+      const res = await axios.get(`${API_BASE}/notifications`, getHeaders());
+      if (res.data.success) {
+        setNotifications(res.data.data);
+        const unread = res.data.data.filter(n => !n.isRead).length;
+        setUnreadNotificationsCount(unread);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err.message);
+    }
+  };
+
+  const markNotificationsAsRead = async (notificationId = null) => {
+    if (!token || !navigator.onLine) return;
+    try {
+      const res = await axios.put(`${API_BASE}/notifications/read`, { notificationId }, getHeaders());
+      if (res.data.success) {
+        setNotifications(prev =>
+          prev.map(n => {
+            if (notificationId) {
+              return n._id === notificationId ? { ...n, isRead: true } : n;
+            } else {
+              return { ...n, isRead: true };
+            }
+          })
+        );
+        if (notificationId) {
+          setUnreadNotificationsCount(prev => Math.max(0, prev - 1));
+        } else {
+          setUnreadNotificationsCount(0);
+        }
+      }
+    } catch (err) {
+      console.error('Error marking notifications as read:', err.message);
+    }
+  };
+
+  const togglePushSubscription = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      showAlert('Push notifications are not supported on this browser/device.', 'error');
+      return;
+    }
+
+    setIsPushLoading(true);
+
+    try {
+      const reg = await navigator.serviceWorker.ready;
+
+      if (isSubscribedToPush) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await axios.post(`${API_BASE}/notifications/unsubscribe`, { endpoint: sub.endpoint }, getHeaders());
+        }
+        setIsSubscribedToPush(false);
+        showAlert('Successfully disabled push notifications on this device.', 'success');
+      } else {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          showAlert('Notification permission was denied. Please enable notifications in your browser settings.', 'error');
+          setIsPushLoading(false);
+          return;
+        }
+
+        const keyRes = await axios.get(`${API_BASE}/notifications/vapid-key`, getHeaders());
+        if (!keyRes.data.success || !keyRes.data.publicKey) {
+          throw new Error('VAPID key not configured on server.');
+        }
+
+        const convertedKey = urlBase64ToUint8Array(keyRes.data.publicKey);
+        const newSub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: convertedKey
+        });
+
+        await axios.post(`${API_BASE}/notifications/subscribe`, { subscription: newSub }, getHeaders());
+
+        setIsSubscribedToPush(true);
+        showAlert('Push notifications enabled successfully!', 'success');
+      }
+    } catch (err) {
+      console.error('Push subscription toggling error:', err);
+      showAlert(err.response?.data?.message || err.message || 'Failed to toggle push notifications.', 'error');
+    } finally {
+      setIsPushLoading(false);
+    }
+  };
+
+  const clearNotifications = async () => {
+    if (!token || !navigator.onLine) return;
+    try {
+      const res = await axios.delete(`${API_BASE}/notifications`, getHeaders());
+      if (res.data.success) {
+        setNotifications([]);
+        setUnreadNotificationsCount(0);
+        showAlert('All notifications cleared successfully!', 'success');
+      }
+    } catch (err) {
+      console.error('Error clearing notifications:', err.message);
+      showAlert(err.response?.data?.message || 'Failed to clear notifications.', 'error');
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -436,10 +598,11 @@ function App() {
       // Sync offline queue first before loading fresh data
       await syncOfflineQueue();
 
-      const [transRes, catRes, groupsRes] = await Promise.all([
+      const [transRes, catRes, groupsRes, notifRes] = await Promise.all([
         axios.get(`${API_BASE}/transactions`, getHeaders()),
         axios.get(`${API_BASE}/categories`, getHeaders()),
-        axios.get(`${API_BASE}/groups`, getHeaders()).catch(() => ({ data: { success: true, data: [] } }))
+        axios.get(`${API_BASE}/groups`, getHeaders()).catch(() => ({ data: { success: true, data: [] } })),
+        axios.get(`${API_BASE}/notifications`, getHeaders()).catch(() => null)
       ]);
 
       if (transRes.data.success) {
@@ -468,6 +631,11 @@ function App() {
           }
         }
       }
+      if (notifRes && notifRes.data && notifRes.data.success) {
+        setNotifications(notifRes.data.data);
+        const unread = notifRes.data.data.filter(n => !n.isRead).length;
+        setUnreadNotificationsCount(unread);
+      }
     } catch (err) {
       if (err.message !== 'Network Error') {
         showAlert(err.response?.data?.message || 'Failed to fetch dashboard data', 'error');
@@ -489,11 +657,12 @@ function App() {
         await syncOfflineQueue();
       }
 
-      const [transRes, catRes, groupsRes, meRes] = await Promise.all([
+      const [transRes, catRes, groupsRes, meRes, notifRes] = await Promise.all([
         axios.get(`${API_BASE}/transactions`, getHeaders()),
         axios.get(`${API_BASE}/categories`, getHeaders()),
         axios.get(`${API_BASE}/groups`, getHeaders()).catch(() => ({ data: { success: true, data: [] } })),
-        axios.get(`${API_BASE}/auth/me`, getHeaders()).catch(() => null)
+        axios.get(`${API_BASE}/auth/me`, getHeaders()).catch(() => null),
+        axios.get(`${API_BASE}/notifications`, getHeaders()).catch(() => null)
       ]);
 
       if (transRes.data.success) {
@@ -530,6 +699,11 @@ function App() {
         ) {
           setAndStoreUser(updatedUser);
         }
+      }
+      if (notifRes && notifRes.data && notifRes.data.success) {
+        setNotifications(notifRes.data.data);
+        const unread = notifRes.data.data.filter(n => !n.isRead).length;
+        setUnreadNotificationsCount(unread);
       }
     } catch (err) {
       console.error('Background sync failed:', err);
@@ -1057,6 +1231,27 @@ function App() {
     }
   };
 
+  const handleSetUserPassword = async (userId, username) => {
+    if (!newPasswordForUser || newPasswordForUser.length < 6) {
+      showAlert('Password must be at least 6 characters long', 'error');
+      return;
+    }
+
+    setPasswordSubmitLoading(true);
+    try {
+      const response = await axios.put(`${API_BASE}/auth/users/${userId}/password`, { password: newPasswordForUser }, getHeaders());
+      if (response.data.success) {
+        showAlert(response.data.message || `Password for ${username} updated successfully`, 'success');
+        setPasswordResetUser(null);
+        setNewPasswordForUser('');
+      }
+    } catch (err) {
+      showAlert(err.response?.data?.message || 'Failed to update user password', 'error');
+    } finally {
+      setPasswordSubmitLoading(false);
+    }
+  };
+
   // Group Operations
   const handleCreateGroupSubmit = async (e) => {
     e.preventDefault();
@@ -1137,10 +1332,17 @@ function App() {
   };
 
   const handleDeleteGroup = async (groupId) => {
-    showConfirm('Are you sure you want to delete this group? All shared expenses in this group will be deleted for everyone.', async () => {
+    showConfirm('Are you sure you want to delete this group? All shared expenses in this group will be deleted for everyone. This action requires your account password to confirm.', async (password) => {
       setLoading(true);
       try {
-        const response = await axios.delete(`${API_BASE}/groups/${groupId}`, getHeaders());
+        const response = await axios.delete(`${API_BASE}/groups/${groupId}`, {
+          ...getHeaders(),
+          headers: {
+            ...getHeaders().headers,
+            'X-Confirm-Password': encodeURIComponent(password)
+          },
+          data: { password }
+        });
         if (response.data.success) {
           setGroups(prev => prev.filter(g => g._id !== groupId));
           showAlert(response.data.message, 'success');
@@ -1151,7 +1353,7 @@ function App() {
       } finally {
         setLoading(false);
       }
-    });
+    }, true);
   };
 
   const handleRemoveGroupMember = async (groupId, memberId, username) => {
@@ -1565,14 +1767,33 @@ function App() {
               <div style={{ position: 'relative' }}>
                 <Lock size={18} style={{ position: 'absolute', left: '16px', top: '16px', color: 'var(--text-muted)' }} />
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   className="form-input"
-                  style={{ paddingLeft: '44px' }}
+                  style={{ paddingLeft: '44px', paddingRight: '44px' }}
                   placeholder="••••••••"
                   value={authForm.password}
                   onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
                   required
                 />
+                <button
+                  type="button"
+                  style={{
+                    position: 'absolute',
+                    right: '16px',
+                    top: '16px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0
+                  }}
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
 
@@ -1597,7 +1818,10 @@ function App() {
           <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '14px', color: 'var(--text-secondary)' }}>
             {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
             <button
-              onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+              onClick={() => {
+                setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                setShowPassword(false);
+              }}
               style={{ background: 'none', border: 'none', color: 'var(--primary-color)', fontWeight: '600', cursor: 'pointer', fontFamily: 'inherit' }}
             >
               {authMode === 'login' ? 'Sign Up Now' : 'Log In Now'}
@@ -1610,7 +1834,7 @@ function App() {
 
   // Render Main Dashboard & Tracks
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', position: 'relative' }}>
       
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1637,10 +1861,212 @@ function App() {
             </span>
           </div>
         </div>
-        <button onClick={handleLogout} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }} title="Log out">
-          <LogOut size={20} />
-        </button>
+        
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Notification Bell */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => {
+                setShowNotificationsTray(!showNotificationsTray);
+                if (!showNotificationsTray) {
+                  fetchNotifications();
+                }
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: showNotificationsTray ? 'var(--primary-color)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '4px',
+                position: 'relative'
+              }}
+              title="Notifications"
+            >
+              <Bell size={20} />
+              {unreadNotificationsCount > 0 && (
+                <span style={{
+                  position: 'absolute',
+                  top: '-2px',
+                  right: '-2px',
+                  backgroundColor: 'var(--danger-color, #ef4444)',
+                  color: 'white',
+                  fontSize: '9px',
+                  fontWeight: '700',
+                  borderRadius: '50%',
+                  width: '15px',
+                  height: '15px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 0 0 2px var(--bg-color, #111827)'
+                }}>
+                  {unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+        </div>
       </header>
+
+      {/* Notifications Modal (New Window Style) */}
+      {showNotificationsTray && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }} className="animate-fade-in">
+          <div className="glass-card animate-scale-in" style={{
+            maxWidth: '500px',
+            width: '100%',
+            maxHeight: '80vh',
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '24px',
+            borderRadius: '16px',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+            border: '1px solid var(--card-border)',
+            backgroundColor: '#1e293b', // Opaque Slate 800 background
+            margin: 0,
+            overflow: 'hidden'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Bell size={18} style={{ color: 'var(--primary-color)' }} /> Notifications
+              </h3>
+              
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                {notifications.length > 0 && (
+                  <button
+                    onClick={clearNotifications}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.2)',
+                      color: 'var(--danger-color)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      transition: 'background var(--transition-fast)'
+                    }}
+                    title="Delete all notifications permanently"
+                  >
+                    Clear All
+                  </button>
+                )}
+
+                {unreadNotificationsCount > 0 && (
+                  <button
+                    onClick={() => markNotificationsAsRead()}
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.1)',
+                      border: '1px solid rgba(99, 102, 241, 0.2)',
+                      color: 'var(--primary-color)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      transition: 'background var(--transition-fast)'
+                    }}
+                  >
+                    Mark all read
+                  </button>
+                )}
+                
+                <button
+                  onClick={() => setShowNotificationsTray(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    padding: '4px'
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Scroll Content */}
+            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px', minHeight: '120px' }}>
+              {notifications.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13.5px', padding: '40px 0' }}>
+                  No notifications yet.
+                </div>
+              ) : (
+                notifications.map(n => (
+                  <div
+                    key={n._id}
+                    onClick={() => {
+                      if (!n.isRead) markNotificationsAsRead(n._id);
+                      if (n.group?._id) {
+                        setFilterGroup(n.group._id);
+                        localStorage.setItem('filterGroup', n.group._id);
+                        setActiveTab('groups');
+                      }
+                      setShowNotificationsTray(false);
+                    }}
+                    style={{
+                      padding: '12px',
+                      background: n.isRead ? 'rgba(255, 255, 255, 0.01)' : 'rgba(99, 102, 241, 0.06)',
+                      border: '1px solid',
+                      borderColor: n.isRead ? 'var(--card-border)' : 'rgba(99, 102, 241, 0.25)',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '12px'
+                    }}
+                    className="notification-item"
+                  >
+                    {renderAvatar(n.sender?.profilePic, 32)}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1 }}>
+                      <span style={{ fontSize: '13px', fontWeight: n.isRead ? '500' : '700', color: 'var(--text-primary)' }}>
+                        {n.title}
+                      </span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                        {n.message}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(n.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {!n.isRead && (
+                      <span style={{
+                        width: '8px',
+                        height: '8px',
+                        backgroundColor: 'var(--primary-color)',
+                        borderRadius: '50%',
+                        marginTop: '4px',
+                        flexShrink: 0
+                      }} />
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* App Alert Banner */}
       {alert && (
@@ -2304,7 +2730,7 @@ function App() {
               </div>
 
               {/* Join or Create Options */}
-              <div className="form-row">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
                 {/* Join Group */}
                 <div className="glass-card" style={{ marginBottom: 0, padding: '16px' }}>
                   <h3 style={{ fontSize: '15px', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2652,18 +3078,19 @@ function App() {
                           <div
                             key={u._id}
                             style={{
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid var(--card-border)',
+                              borderRadius: '12px',
+                              padding: '12px 16px',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              padding: '12px 16px',
-                              background: 'rgba(255,255,255,0.02)',
-                              border: '1px solid var(--card-border)',
-                              borderRadius: '12px'
+                              width: '100%'
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                               {renderAvatar(u.profilePic, 36)}
-                              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                                 <span style={{ fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   {u.username}
                                   {(u.role === 'admin' || u.username === 'rkdarpan') && (
@@ -2672,33 +3099,84 @@ function App() {
                                     </span>
                                   )}
                                 </span>
-                                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{u.email}</span>
-                                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Registered: {new Date(u.createdAt).toLocaleDateString()}</span>
+                                <span 
+                                  style={{ 
+                                    fontSize: '12px', 
+                                    color: 'var(--text-secondary)',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    maxWidth: '150px',
+                                    display: 'block'
+                                  }}
+                                  title={u.email}
+                                >
+                                  {u.email}
+                                </span>
+                                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Reg: {new Date(u.createdAt).toLocaleDateString()}</span>
                               </div>
                             </div>
 
-                            {u.role !== 'admin' && u.username !== 'rkdarpan' && (
-                              <button
-                                onClick={() => handleRemoveUser(u._id, u.username, u.role)}
-                                style={{
-                                  background: 'rgba(239, 68, 68, 0.08)',
-                                  border: '1px solid rgba(239, 68, 68, 0.2)',
-                                  color: 'var(--danger-color)',
-                                  cursor: 'pointer',
-                                  padding: '8px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '12px',
-                                  fontWeight: '600',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  transition: 'background 0.2s'
-                                }}
-                                title="Remove User permanently"
-                              >
-                                <Trash2 size={14} /> Remove
-                              </button>
-                            )}
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                              {u.role !== 'admin' && u.username !== 'rkdarpan' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPasswordResetUser({ 
+                                        id: u._id, 
+                                        username: u.username,
+                                        email: u.email,
+                                        createdAt: u.createdAt,
+                                        profilePic: u.profilePic
+                                      });
+                                      setNewPasswordForUser('');
+                                    }}
+                                    style={{
+                                      background: 'rgba(255, 255, 255, 0.04)',
+                                      border: '1px solid var(--card-border)',
+                                      color: 'var(--text-secondary)',
+                                      cursor: 'pointer',
+                                      padding: '8px',
+                                      borderRadius: '8px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      transition: 'all 0.2s',
+                                      width: '32px',
+                                      height: '32px',
+                                      flexShrink: 0
+                                    }}
+                                    title="View details & set password"
+                                  >
+                                    <Eye size={15} />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveUser(u._id, u.username, u.role)}
+                                    style={{
+                                      background: 'rgba(239, 68, 68, 0.08)',
+                                      border: '1px solid rgba(239, 68, 68, 0.2)',
+                                      color: 'var(--danger-color)',
+                                      cursor: 'pointer',
+                                      padding: '8px',
+                                      borderRadius: '8px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      transition: 'background 0.2s',
+                                      width: '32px',
+                                      height: '32px',
+                                      flexShrink: 0
+                                    }}
+                                    title="Remove User permanently"
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         ))
                       )}
@@ -2907,17 +3385,19 @@ function App() {
 
                 <div style={{ borderTop: '1px solid var(--card-border)', marginTop: '8px', paddingTop: '16px' }}>
                   <h4 style={{ fontSize: '13.5px', fontWeight: '600', marginBottom: '10px', color: 'var(--text-secondary)' }}>Change Password (Optional)</h4>
-                  <div className="form-row">
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label>Current Password</label>
-                      <input
-                        type="password"
-                        className="form-input"
-                        placeholder="••••••"
-                        value={profileForm.currentPassword}
-                        onChange={e => setProfileForm(prev => ({ ...prev, currentPassword: e.target.value }))}
-                      />
-                    </div>
+                  <div className="form-row" style={(user?.role?.toLowerCase() === 'admin' || user?.username?.toLowerCase() === 'rkdarpan') ? { gridTemplateColumns: '1fr' } : {}}>
+                    {!(user?.role?.toLowerCase() === 'admin' || user?.username?.toLowerCase() === 'rkdarpan') && (
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Current Password</label>
+                        <input
+                          type="password"
+                          className="form-input"
+                          placeholder="••••••"
+                          value={profileForm.currentPassword}
+                          onChange={e => setProfileForm(prev => ({ ...prev, currentPassword: e.target.value }))}
+                        />
+                      </div>
+                    )}
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label>New Password</label>
                       <input
@@ -2935,6 +3415,64 @@ function App() {
                   Save Profile Changes
                 </button>
               </form>
+            </div>
+
+            {/* Theme Settings Section */}
+            <div className="glass-card">
+              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Layers size={18} style={{ color: 'var(--primary-color)' }} /> App Theme
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
+                Choose a modern and vibrant color palette for your Hisab Khata interface.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px' }}>
+                {[
+                  { id: 'midnight', name: 'Midnight Indigo', gradient: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)' },
+                  { id: 'emerald', name: 'Emerald Neon', gradient: 'linear-gradient(135deg, #059669 0%, #06b6d4 100%)' },
+                  { id: 'cyberpunk', name: 'Cyberpunk Dream', gradient: 'linear-gradient(135deg, #ec4899 0%, #06b6d4 100%)' },
+                  { id: 'minimalist', name: 'Minimalist Slate', gradient: 'linear-gradient(135deg, #9ca3af 0%, #4b5563 100%)' }
+                ].map(t => {
+                  const isSelected = theme === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTheme(t.id)}
+                      style={{
+                        background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                        border: isSelected ? '2px solid var(--primary-color)' : '1px solid var(--card-border)',
+                        borderRadius: '12px',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'all var(--transition-fast)',
+                        textAlign: 'center',
+                        outline: 'none',
+                        width: '100%'
+                      }}
+                    >
+                      <div style={{
+                        width: '100%',
+                        height: '24px',
+                        borderRadius: '6px',
+                        background: t.gradient,
+                        boxShadow: isSelected ? '0 0 10px rgba(255, 255, 255, 0.1)' : 'none'
+                      }} />
+                      <span style={{ 
+                        fontSize: '13px', 
+                        fontWeight: '600', 
+                        color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'
+                      }}>
+                        {t.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Personal Analytics & Reports Section */}
@@ -3348,6 +3886,88 @@ function App() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Push Notifications Settings Card */}
+            <div className="glass-card">
+              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Bell size={18} style={{ color: 'var(--primary-color)' }} /> Push & Device Alerts
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
+                Receive real-time push alerts on this device when other members add or edit costs in your joined groups.
+              </p>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '600' }}>
+                    {isSubscribedToPush ? 'Push Alerts Enabled' : 'Push Alerts Disabled'}
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {isSubscribedToPush 
+                      ? 'You will receive alerts on this device even when the app is closed.'
+                      : 'Enable to receive group cost alerts directly on this device.'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={togglePushSubscription}
+                  disabled={isPushLoading}
+                  className={isSubscribedToPush ? 'secondary-btn' : 'gradient-btn'}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    margin: 0,
+                    width: 'auto'
+                  }}
+                >
+                  {isPushLoading ? (
+                    <Loader className="animate-spin" size={14} />
+                  ) : isSubscribedToPush ? (
+                    'Disable'
+                  ) : (
+                    'Enable'
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Session Management & Log Out */}
+            <div className="glass-card" style={{ border: '1px solid rgba(239, 68, 68, 0.2)', background: 'rgba(239, 68, 68, 0.02)', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger-color)' }}>
+                <LogOut size={18} /> Session Management
+              </h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
+                Logout of your current account session on this device.
+              </p>
+              
+              <button 
+                type="button" 
+                onClick={handleLogout}
+                className="secondary-btn" 
+                style={{ 
+                  width: '100%', 
+                  padding: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '8px',
+                  color: 'var(--danger-color)',
+                  borderColor: 'rgba(239, 68, 68, 0.2)',
+                  background: 'rgba(239, 68, 68, 0.05)',
+                  cursor: 'pointer',
+                  borderRadius: '10px',
+                  fontWeight: '600'
+                }}
+              >
+                <LogOut size={16} /> Log Out of App
+              </button>
             </div>
           </>
         )}
@@ -4198,11 +4818,28 @@ function App() {
             <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>
               {confirmModal.message}
             </p>
+            {confirmModal.requiresPassword && (
+              <div style={{ position: 'relative', width: '100%', marginTop: '8px' }}>
+                <Lock size={18} style={{ position: 'absolute', left: '16px', top: '14px', color: 'var(--text-muted)' }} />
+                <input
+                  type="password"
+                  className="form-input"
+                  style={{ paddingLeft: '44px', width: '100%', boxSizing: 'border-box' }}
+                  placeholder="Enter your account password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
               <button
                 className="secondary-btn"
                 style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
-                onClick={() => setConfirmModal(null)}
+                onClick={() => {
+                  setConfirmPassword('');
+                  setConfirmModal(null);
+                }}
               >
                 Cancel
               </button>
@@ -4210,11 +4847,118 @@ function App() {
                 className="gradient-btn"
                 style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', border: 'none', cursor: 'pointer' }}
                 onClick={() => {
-                  confirmModal.onConfirm();
+                  if (confirmModal.requiresPassword && !confirmPassword) {
+                    showAlert('Please enter your password to confirm.', 'error');
+                    return;
+                  }
+                  confirmModal.onConfirm(confirmPassword);
+                  setConfirmPassword('');
                   setConfirmModal(null);
                 }}
               >
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* User Details & Set Password Popup Modal */}
+      {passwordResetUser && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }} className="animate-fade-in">
+          <div className="glass-card animate-scale-in" style={{
+            maxWidth: '420px',
+            width: '100%',
+            padding: '24px',
+            borderRadius: '16px',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Eye size={18} style={{ color: 'var(--primary-color)' }} /> User details & settings
+              </h3>
+              <button 
+                type="button"
+                onClick={() => {
+                  setPasswordResetUser(null);
+                  setNewPasswordForUser('');
+                }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '18px', fontWeight: '600' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* User Profile Details */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              {renderAvatar(passwordResetUser.profilePic, 48)}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-primary)', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                  {passwordResetUser.username}
+                </span>
+                <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                  {passwordResetUser.email}
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Registered: {new Date(passwordResetUser.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Set Password Section */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <h4 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                Set New Password
+              </h4>
+              <div style={{ position: 'relative', width: '100%' }}>
+                <Lock size={18} style={{ position: 'absolute', left: '16px', top: '14px', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ paddingLeft: '44px', width: '100%', boxSizing: 'border-box' }}
+                  placeholder="Enter new password (min 6 chars)"
+                  value={newPasswordForUser}
+                  onChange={(e) => setNewPasswordForUser(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', gap: '12px', borderTop: '1px solid var(--card-border)', paddingTop: '16px', marginTop: '4px' }}>
+              <button
+                className="secondary-btn"
+                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+                onClick={() => {
+                  setPasswordResetUser(null);
+                  setNewPasswordForUser('');
+                }}
+              >
+                Close
+              </button>
+              <button
+                className="gradient-btn"
+                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+                onClick={() => handleSetUserPassword(passwordResetUser.id, passwordResetUser.username)}
+                disabled={passwordSubmitLoading}
+              >
+                {passwordSubmitLoading ? 'Saving...' : 'Save Password'}
               </button>
             </div>
           </div>
