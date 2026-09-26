@@ -53,6 +53,12 @@ const UserSchema = new mongoose.Schema({
       amount: { type: Number, required: true }
     }
   ],
+  linkedPersonalGroups: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Group'
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

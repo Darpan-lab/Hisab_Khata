@@ -106,7 +106,8 @@ router.post('/signup', async (req, res) => {
         telegramBotUsername: getBotUsername(),
         profilePic: user.profilePic || '',
         budget: user.budget || 0,
-        historicalBudgets: user.historicalBudgets || []
+        historicalBudgets: user.historicalBudgets || [],
+        linkedPersonalGroups: user.linkedPersonalGroups || []
       }
     });
   } catch (err) {
@@ -153,7 +154,8 @@ router.post('/login', async (req, res) => {
         telegramBotUsername: getBotUsername(),
         profilePic: user.profilePic || '',
         budget: user.budget || 0,
-        historicalBudgets: user.historicalBudgets || []
+        historicalBudgets: user.historicalBudgets || [],
+        linkedPersonalGroups: user.linkedPersonalGroups || []
       }
     });
   } catch (err) {
@@ -185,7 +187,8 @@ router.get('/me', protect, async (req, res) => {
         telegramBotUsername: getBotUsername(),
         profilePic: user.profilePic || '',
         budget: user.budget || 0,
-        historicalBudgets: user.historicalBudgets || []
+        historicalBudgets: user.historicalBudgets || [],
+        linkedPersonalGroups: user.linkedPersonalGroups || []
       }
     });
   } catch (err) {
@@ -237,7 +240,7 @@ router.put('/sheeturl', protect, async (req, res) => {
 // @desc    Update user profile details (username, email, profilePic, password, budget)
 // @access  Private
 router.put('/profile', protect, async (req, res) => {
-  const { username, email, profilePic, currentPassword, newPassword, budget, telegramChatId, activeTelegramGroup } = req.body;
+  const { username, email, profilePic, currentPassword, newPassword, budget, telegramChatId, activeTelegramGroup, linkedPersonalGroups } = req.body;
 
   try {
     const user = await User.findById(req.user.id);
@@ -272,6 +275,10 @@ router.put('/profile', protect, async (req, res) => {
 
     if (activeTelegramGroup !== undefined) {
       user.activeTelegramGroup = activeTelegramGroup || null;
+    }
+
+    if (linkedPersonalGroups !== undefined && Array.isArray(linkedPersonalGroups)) {
+      user.linkedPersonalGroups = linkedPersonalGroups;
     }
 
     // If changing password, verify current password (unless user is an admin) and hash new password
@@ -315,7 +322,8 @@ router.put('/profile', protect, async (req, res) => {
         telegramBotUsername: getBotUsername(),
         profilePic: user.profilePic || '',
         budget: user.budget || 0,
-        historicalBudgets: user.historicalBudgets || []
+        historicalBudgets: user.historicalBudgets || [],
+        linkedPersonalGroups: user.linkedPersonalGroups || []
       }
     });
   } catch (err) {

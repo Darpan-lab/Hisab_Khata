@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 const API_BASE = '/api';
+const APP_VERSION = '1.0.0 (v8)';
 const presetAvatars = ['👤', '👨‍💻', '👩‍💻', '🦁', '🦊', '🐼', '🐱', '🕶️', '👑', '⭐', '🍀', '🔥'];
 
 function App() {
@@ -281,6 +282,29 @@ function App() {
   useEffect(() => {
     setSelectedHistoryIds([]);
   }, [activeTab, historyCategoryFilter, historyStartDate, historyEndDate]);
+
+  // Shared Group Personal Linking State
+  const [linkedPersonalGroups, setLinkedPersonalGroups] = useState(() => {
+    try {
+      const storedUser = localStorage.getItem('user');
+      const parsedUser = storedUser ? JSON.parse(storedUser) : null;
+      if (parsedUser && Array.isArray(parsedUser.linkedPersonalGroups)) {
+        return parsedUser.linkedPersonalGroups;
+      }
+      const myId = parsedUser ? (parsedUser.id || parsedUser._id) : 'default';
+      const localStored = localStorage.getItem(`linkedPersonalGroups_${myId}`);
+      return localStored ? JSON.parse(localStored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Sync linkedPersonalGroups when user object changes
+  useEffect(() => {
+    if (user && Array.isArray(user.linkedPersonalGroups)) {
+      setLinkedPersonalGroups(user.linkedPersonalGroups);
+    }
+  }, [user]);
   
   // Settings Tab Category Scope State
   const [settingsCategoryScope, setSettingsCategoryScope] = useState('personal');
@@ -867,6 +891,10 @@ function App() {
   };
 
   const handleDeleteTransaction = async (id) => {
+    if (typeof id === 'string' && id.startsWith('group-summary-')) {
+      showAlert('This is a consolidated group total. Manage individual expenses inside the group view.', 'info');
+      return;
+    }
     showConfirm('Are you sure you want to delete this transaction?', async () => {
       setSelectedHistoryIds(prev => prev.filter(itemId => itemId !== id));
       if (id && id.startsWith && id.startsWith('temp-')) {
@@ -1441,11 +1469,141 @@ function App() {
     setTimeout(() => setCopiedCode(''), 3000);
   };
 
-  // Transaction Filters & Totals
-  const filteredTransactions = transactions.filter(t => {
-    if (filterGroup === 'personal') return !t.group;
-    return t.group && (t.group._id === filterGroup || t.group === filterGroup);
-  });
+  const handleToggleLinkGroupToPersonal = async (groupId) => {
+    const isAlreadyLinked = linkedPersonalGroups.includes(groupId);
+    const nextLinked = isAlreadyLinked 
+      ? linkedPersonalGroups.filter(id => id !== groupId)
+      : [...linkedPersonalGroups, groupId];
+
+    setLinkedPersonalGroups(nextLinked);
+
+    const myId = user?.id || user?._id || 'default';
+    localStorage.setItem(`linkedPersonalGroups_${myId}`, JSON.stringify(nextLinked));
+
+    const targetGroup = groups.find(g => g._id === groupId);
+    const groupName = targetGroup?.name || 'Group';
+
+    if (user) {
+      const updatedUser = { ...user, linkedPersonalGroups: nextLinked };
+      setAndStoreUser(updatedUser);
+
+      if (navigator.onLine && token) {
+        try {
+          await axios.put(`${API_BASE}/auth/profile`, { linkedPersonalGroups: nextLinked }, getHeaders());
+        } catch (err) {
+          console.error('Failed to sync linked personal groups to server:', err);
+        }
+      }
+    }
+
+    if (!isAlreadyLinked) {
+      showAlert(`Expenses you spend in "${groupName}" will now be added to your Personal costing under "${groupName}".`, 'success');
+    } else {
+      showAlert(`Disconnected "${groupName}" expenses from your Personal costing.`, 'info');
+    }
+  };
+
+  // Detailed list of all active transactions for metrics (preserving individual dates and categories)
+  const metricTransactions = useMemo(() => {
+    if (filterGroup !== 'personal') {
+      return transactions.filter(t => {
+        const gid = t.group?._id || t.group || t.groupId;
+        return gid === filterGroup;
+      });
+    }
+
+    const myId = user?.id || user?._id;
+    return transactions.filter(t => {
+      const gid = t.group?._id || t.group || t.groupId;
+      if (!gid) return true;
+      if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.includes(gid)) {
+        return myId && (
+          (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
+          (typeof t.user === 'string' && (t.user === myId || t.user === user?.id || t.user === user?._id)) ||
+          (t.user?.email && user?.email && t.user.email === user.email)
+        );
+      }
+      return false;
+    });
+  }, [transactions, filterGroup, linkedPersonalGroups, user]);
+
+  // Transaction Filters & Totals (consolidates user's expenses from linked shared groups into a single total entry named after the group)
+  const filteredTransactions = useMemo(() => {
+    if (filterGroup !== 'personal') {
+      return transactions.filter(t => {
+        const gid = t.group?._id || t.group || t.groupId;
+        return gid === filterGroup;
+      });
+    }
+
+    const myId = user?.id || user?._id;
+    const personalList = [];
+
+    // 1. Pure personal transactions (no group)
+    transactions.forEach(t => {
+      const gid = t.group?._id || t.group || t.groupId;
+      if (!gid) {
+        personalList.push(t);
+      }
+    });
+
+    // 2. Consolidated single entry for each linked shared group
+    if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.length > 0) {
+      linkedPersonalGroups.forEach(gid => {
+        const matchedGroup = groups.find(g => g._id === gid);
+        const groupName = matchedGroup?.name || 'Shared Group';
+
+        // Filter transactions in this group where the current user spent
+        const myGroupTxs = transactions.filter(t => {
+          const tGid = t.group?._id || t.group || t.groupId;
+          if (tGid !== gid) return false;
+
+          return myId && (
+            (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
+            (typeof t.user === 'string' && (t.user === myId || t.user === user?.id || t.user === user?._id)) ||
+            (t.user?.email && user?.email && t.user.email === user.email)
+          );
+        });
+
+        if (myGroupTxs.length > 0) {
+          // Sort to find the latest transaction date/created time
+          const sortedGroupTxs = [...myGroupTxs].sort((a, b) => {
+            const dateA = parseLocalDate(a.date);
+            const dateB = parseLocalDate(b.date);
+            if (dateB - dateA !== 0) return dateB - dateA;
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          });
+
+          const latestTx = sortedGroupTxs[0];
+          const totalSpentInGroup = myGroupTxs.reduce((sum, t) => sum + (t.cost * t.quantity), 0);
+
+          personalList.push({
+            _id: `group-summary-${gid}`,
+            itemName: groupName, // cost name will be the group name as a common consolidated entry
+            cost: totalSpentInGroup, // total costing of what user spent in that group
+            quantity: 1,
+            category: 'Shared Cost',
+            date: latestTx?.date || getLocalDateString(),
+            createdAt: latestTx?.createdAt || new Date().toISOString(),
+            isGroupTotalSummary: true,
+            isSharedGroupCost: true,
+            sharedGroupId: gid,
+            sharedGroupName: groupName,
+            itemCount: myGroupTxs.length,
+            group: matchedGroup || { _id: gid, name: groupName },
+            user: user
+          });
+        }
+      });
+    }
+
+    return personalList.sort((a, b) => {
+      const dateA = parseLocalDate(a.date);
+      const dateB = parseLocalDate(b.date);
+      if (dateB - dateA !== 0) return dateB - dateA;
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+  }, [transactions, filterGroup, linkedPersonalGroups, groups, user]);
 
   // Filter and sort transactions specifically for the History tab
   const historyTransactions = useMemo(() => {
@@ -1621,18 +1779,9 @@ function App() {
     }
   }, [filterGroup, user, activeGroupObj, historySelectedMonth, historySelectedYear]);
 
-  const selectedPeriodMonthSpending = useMemo(() => {
-    return filteredTransactions.reduce((acc, t) => {
-      const tDate = parseLocalDate(t.date);
-      if (tDate.getMonth() === historySelectedMonth && tDate.getFullYear() === historySelectedYear) {
-        return acc + (t.cost * t.quantity);
-      }
-      return acc;
-    }, 0);
-  }, [filteredTransactions, historySelectedMonth, historySelectedYear]);
 
   const categoryBreakdown = useMemo(() => {
-    const periodTx = filteredTransactions.filter(t => {
+    const periodTx = metricTransactions.filter(t => {
       const tDate = parseLocalDate(t.date);
       return tDate.getMonth() === historySelectedMonth && tDate.getFullYear() === historySelectedYear;
     });
@@ -1654,7 +1803,7 @@ function App() {
 
     breakdown.sort((a, b) => b.amount - a.amount);
     return { breakdown, totalSpent };
-  }, [filteredTransactions, historySelectedMonth, historySelectedYear, categories]);
+  }, [metricTransactions, historySelectedMonth, historySelectedYear, categories]);
 
   // Categories computed based on the selected group filter (for Add Expense Form)
   const formCategories = useMemo(() => {
@@ -1703,7 +1852,7 @@ function App() {
     const thisMonth = new Date().getMonth();
     const thisYear = new Date().getFullYear();
 
-    return filteredTransactions.reduce((acc, t) => {
+    return metricTransactions.reduce((acc, t) => {
       const amt = t.cost * t.quantity;
       const tDate = parseLocalDate(t.date);
 
@@ -1802,7 +1951,68 @@ function App() {
   const memberBreakdown = getGroupMemberBreakdown();
 
   const handleDownloadPersonalCSV = () => {
-    const personalTransactions = transactions.filter(t => !t.group);
+    const myId = user?.id || user?._id;
+    const purePersonalTransactions = transactions.filter(t => !t.group);
+
+    // Consolidate each linked shared group: NO individual shared entries, just group name and total cost!
+    const consolidatedGroupItems = [];
+    if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.length > 0) {
+      linkedPersonalGroups.forEach(gid => {
+        const matchedGroup = groups.find(g => g._id === gid);
+        const groupName = matchedGroup?.name || 'Shared Group';
+
+        const myGroupTxs = transactions.filter(t => {
+          const tGid = t.group?._id || t.group || t.groupId;
+          if (tGid !== gid) return false;
+
+          return myId && (
+            (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
+            (typeof t.user === 'string' && (t.user === myId || t.user === user?.id || t.user === user?._id)) ||
+            (t.user?.email && user?.email && t.user.email === user.email)
+          );
+        });
+
+        if (myGroupTxs.length > 0) {
+          const sorted = [...myGroupTxs].sort((a, b) => {
+            const dateA = parseLocalDate(a.date);
+            const dateB = parseLocalDate(b.date);
+            if (dateB - dateA !== 0) return dateB - dateA;
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          });
+          const latestTx = sorted[0];
+          const totalSpent = myGroupTxs.reduce((sum, t) => sum + (t.cost * t.quantity), 0);
+
+          consolidatedGroupItems.push({
+            date: latestTx.date,
+            createdAt: latestTx.createdAt,
+            itemName: groupName, // just group name
+            category: 'Shared Cost',
+            cost: totalSpent,
+            quantity: 1,
+            totalPrice: totalSpent
+          });
+        }
+      });
+    }
+
+    const reportItems = [
+      ...purePersonalTransactions.map(t => ({
+        date: t.date,
+        createdAt: t.createdAt,
+        itemName: t.itemName,
+        category: t.category,
+        cost: t.cost,
+        quantity: t.quantity,
+        totalPrice: t.cost * t.quantity
+      })),
+      ...consolidatedGroupItems
+    ].sort((a, b) => {
+      const dateA = parseLocalDate(a.date);
+      const dateB = parseLocalDate(b.date);
+      if (dateB - dateA !== 0) return dateB - dateA;
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+
     let csvContent = "";
     csvContent += `Personal Expense Report - ${user?.username || 'User'}\n`;
     csvContent += `Generated On,${new Date().toLocaleDateString()}\n`;
@@ -1810,9 +2020,9 @@ function App() {
     csvContent += `Monthly Budget,${user?.budget || 0}\n\n`;
     csvContent += "COST ITEMS LIST\n";
     csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price\n";
-    personalTransactions.forEach(t => {
+    reportItems.forEach(t => {
       const formattedDate = parseLocalDate(t.date).toLocaleDateString();
-      csvContent += `"${formattedDate}","${(t.itemName || '').replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.cost * t.quantity}\n`;
+      csvContent += `"${formattedDate}","${(t.itemName || '').replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.totalPrice}\n`;
     });
 
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1931,6 +2141,18 @@ function App() {
     return (
       <div className="main-content animate-fade-in" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '100vh', paddingBottom: '20px' }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+          <img 
+            src="/logo.png" 
+            alt="Hisab Khata Logo" 
+            style={{ 
+              width: '68px', 
+              height: '68px', 
+              borderRadius: '16px', 
+              marginBottom: '14px', 
+              objectFit: 'cover',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)' 
+            }} 
+          />
           <h1 style={{ fontSize: '36px', fontWeight: '800', margin: '0' }} className="app-title">Hisab Khata</h1>
           <p style={{ color: 'var(--text-secondary)', marginTop: '8px', fontSize: '15px' }}>Track your budget. Sync to Google Sheets.</p>
         </div>
@@ -2557,29 +2779,42 @@ function App() {
                 ) : (
                   filteredTransactions.slice(0, 5).map(t => {
                     const matchedCat = categories.find(c => c.name === t.category);
-                    const catColor = matchedCat?.color || 'var(--text-muted)';
+                    const catColor = t.isGroupTotalSummary ? 'var(--primary-color)' : (matchedCat?.color || 'var(--text-muted)');
                     return (
                       <div key={t._id} className="transaction-item animate-fade-in">
                         <div className="transaction-info">
                           <span className="transaction-name">{t.itemName}</span>
                           <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px' }}>
-                            <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
-                              {t.category}
-                            </span>
-                            {t.isPending && (
-                              <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
-                                ⏳ Sync Pending
-                              </span>
-                            )}
-                            {t.group && (
+                            {t.isGroupTotalSummary ? (
                               <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                👥 {t.group.name || t.group}
+                                Shared Group Total ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'})
                               </span>
+                            ) : (
+                              <>
+                                <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
+                                  {t.category}
+                                </span>
+                                {t.isSharedGroupCost && t.originalItemName && (
+                                  <span className="badge" style={{ backgroundColor: 'var(--surface-subtle)', color: 'var(--text-secondary)', border: '1px solid var(--card-border)' }}>
+                                    📝 {t.originalItemName}
+                                  </span>
+                                )}
+                                {t.isPending && (
+                                  <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                                    ⏳ Sync Pending
+                                  </span>
+                                )}
+                                {t.group && (
+                                  <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
+                                    👥 {t.group.name || t.group}
+                                  </span>
+                                )}
+                              </>
                             )}
                             <span style={{ color: 'var(--text-muted)' }}>
                               {parseLocalDate(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                             </span>
-                            {t.group && t.user && (
+                            {!t.isGroupTotalSummary && t.group && t.user && (
                               <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
                               </span>
@@ -2857,7 +3092,7 @@ function App() {
                 ) : (
                   (historyViewAll ? historyTransactions : historyTransactions.slice(0, 5)).map(t => {
                     const matchedCat = categories.find(c => c.name === t.category);
-                    const catColor = matchedCat?.color || 'var(--text-muted)';
+                    const catColor = t.isGroupTotalSummary ? 'var(--primary-color)' : (matchedCat?.color || 'var(--text-muted)');
                     const isSelected = selectedHistoryIds.includes(t._id);
                     const isSelectionMode = selectedHistoryIds.length > 0;
                     return (
@@ -2927,23 +3162,36 @@ function App() {
                         <div className="transaction-info" style={{ flex: 1, paddingRight: '12px' }}>
                           <span className="transaction-name" style={{ fontSize: '16px' }}>{t.itemName}</span>
                           <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px', margin: '4px 0' }}>
-                            <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
-                              {t.category}
-                            </span>
-                            {t.isPending && (
-                              <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
-                                ⏳ Sync Pending
-                              </span>
-                            )}
-                            {t.group && (
+                            {t.isGroupTotalSummary ? (
                               <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                👥 {t.group.name || t.group}
+                                Shared Group Total ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'})
                               </span>
+                            ) : (
+                              <>
+                                <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
+                                  {t.category}
+                                </span>
+                                {t.isSharedGroupCost && t.originalItemName && (
+                                  <span className="badge" style={{ backgroundColor: 'var(--surface-subtle)', color: 'var(--text-secondary)', border: '1px solid var(--card-border)' }}>
+                                    📝 {t.originalItemName}
+                                  </span>
+                                )}
+                                {t.isPending && (
+                                  <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                                    ⏳ Sync Pending
+                                  </span>
+                                )}
+                                {t.group && (
+                                  <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
+                                    👥 {t.group.name || t.group}
+                                  </span>
+                                )}
+                              </>
                             )}
                             <span style={{ color: 'var(--text-muted)' }}>
                               {parseLocalDate(t.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                             </span>
-                            {t.group && t.user && (
+                            {!t.isGroupTotalSummary && t.group && t.user && (
                               <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
                               </span>
@@ -2958,20 +3206,46 @@ function App() {
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ fontSize: '18px', fontWeight: '700' }}>৳{(t.cost * t.quantity).toLocaleString()}</span>
-                          {(t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
+                          {t.isGroupTotalSummary ? (
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDeleteTransaction(t._id);
+                                setFilterGroup(t.sharedGroupId);
                               }}
                               onMouseDown={(e) => e.stopPropagation()}
                               onTouchStart={(e) => e.stopPropagation()}
-                              style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '6px', borderRadius: '8px', transition: 'background 0.2s' }}
-                              title="Delete transaction"
-                              disabled={syncLoading}
+                              className="secondary-btn"
+                              style={{
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                borderRadius: 'var(--radius-sm)',
+                                cursor: 'pointer'
+                              }}
+                              title={`View ${t.sharedGroupName} details`}
                             >
-                              <Trash2 size={18} />
+                              <Eye size={13} /> View Group
                             </button>
+                          ) : (
+                            (t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteTransaction(t._id);
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '6px', borderRadius: '8px', transition: 'background 0.2s' }}
+                                title="Delete transaction"
+                                disabled={syncLoading}
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            )
                           )}
                         </div>
                       </div>
@@ -3409,6 +3683,77 @@ function App() {
                           </div>
                         </div>
 
+                        {/* Share with Personal Costing Toggle Button */}
+                        {(() => {
+                          const isLinkedToPersonal = linkedPersonalGroups.includes(g._id);
+                          return (
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '12px 14px',
+                              borderRadius: 'var(--radius-sm)',
+                              background: isLinkedToPersonal ? 'var(--primary-light)' : 'var(--surface-subtle)',
+                              border: isLinkedToPersonal ? '1px solid var(--primary-border)' : '1px solid var(--card-border)',
+                              transition: 'all 0.2s ease',
+                              gap: '12px'
+                            }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                                    Share with Personal Costing
+                                  </span>
+                                  {isLinkedToPersonal && (
+                                    <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--primary-color)', background: 'var(--card-bg)', border: '1px solid var(--primary-border)', padding: '1px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                      Enabled
+                                    </span>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                  {isLinkedToPersonal 
+                                    ? `Only what you spend in "${g.name}" is continuously added to your personal costing scope under "${g.name}".`
+                                    : `Enable to automatically add your spending in this group into your personal costing scope under "${g.name}".`}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleToggleLinkGroupToPersonal(g._id)}
+                                role="switch"
+                                aria-checked={isLinkedToPersonal}
+                                style={{
+                                  position: 'relative',
+                                  width: '46px',
+                                  height: '26px',
+                                  borderRadius: '13px',
+                                  border: 'none',
+                                  backgroundColor: isLinkedToPersonal ? 'var(--primary-color)' : 'var(--card-border)',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  flexShrink: 0,
+                                  transition: 'background-color 0.2s ease',
+                                  outline: 'none'
+                                }}
+                                title={isLinkedToPersonal ? "Disable sharing with personal costing" : "Enable sharing with personal costing"}
+                              >
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: '3px',
+                                    left: isLinkedToPersonal ? '23px' : '3px',
+                                    width: '20px',
+                                    height: '20px',
+                                    borderRadius: '50%',
+                                    backgroundColor: '#ffffff',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                                    transition: 'left 0.2s ease'
+                                  }}
+                                />
+                              </button>
+                            </div>
+                          );
+                        })()}
+
                         {/* Invite Code widget */}
                         <div style={{ background: 'var(--surface-subtle)', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
@@ -3772,19 +4117,18 @@ function App() {
                           border: '1px solid var(--primary-border)',
                           color: 'var(--primary-color)',
                           cursor: 'pointer',
-                          padding: '6px 12px',
+                          padding: '6px 8px',
                           borderRadius: 'var(--radius-sm)',
-                          fontSize: '12.5px',
-                          fontWeight: '600',
-                          display: 'flex',
+                          display: 'inline-flex',
                           alignItems: 'center',
-                          gap: '6px',
+                          justifyContent: 'center',
                           transition: 'all var(--transition-fast)'
                         }}
-                        title="Enter Admin Control Panel"
+                        title="Admin Control Panel"
+                        aria-label="Admin Control Panel"
                         className="admin-control-btn"
                       >
-                        <Shield size={14} /> Admin Control
+                        <Shield size={16} />
                       </button>
                     )}
                   </h2>
@@ -4445,11 +4789,29 @@ function App() {
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: '600',
                 marginTop: '16px',
-                marginBottom: '24px'
+                marginBottom: '16px'
               }}
             >
               <LogOut size={16} /> Log Out
             </button>
+
+            {/* App Version Info */}
+            <div style={{
+              textAlign: 'center',
+              padding: '8px 0 28px 0',
+              color: 'var(--text-muted)',
+              fontSize: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '3px',
+              userSelect: 'none'
+            }}>
+              <span style={{ fontWeight: '600', color: 'var(--text-secondary)', letterSpacing: '0.2px' }}>
+                Hisab Khata
+              </span>
+              <span>Version {APP_VERSION}</span>
+            </div>
           </>
         )}
       </div>
@@ -4882,17 +5244,61 @@ function App() {
       {/* Personal Details & Budget Analytics Modal */}
       {showPersonalAnalytics && (() => {
         // Filter personal transactions by selected month & year
-        const personalTransactions = transactions.filter(t => {
+        const purePersonalTransactions = transactions.filter(t => {
           if (t.group) return false;
           
           const tDate = parseLocalDate(t.date);
           return tDate.getMonth() === analyticsSelectedMonth && tDate.getFullYear() === analyticsSelectedYear;
         });
 
+        const myId = user?.id || user?._id;
+        const consolidatedGroupEntries = [];
+        if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.length > 0) {
+          linkedPersonalGroups.forEach(gid => {
+            const matchedGroup = groups.find(g => g._id === gid);
+            const groupName = matchedGroup?.name || 'Shared Group';
+
+            const myGroupTxs = transactions.filter(t => {
+              const tGid = t.group?._id || t.group || t.groupId;
+              if (tGid !== gid) return false;
+              const tDate = parseLocalDate(t.date);
+              if (tDate.getMonth() !== analyticsSelectedMonth || tDate.getFullYear() !== analyticsSelectedYear) return false;
+
+              return myId && (
+                (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
+                (typeof t.user === 'string' && (t.user === myId || t.user === user?.id || t.user === user?._id)) ||
+                (t.user?.email && user?.email && t.user.email === user.email)
+              );
+            });
+
+            if (myGroupTxs.length > 0) {
+              const sorted = [...myGroupTxs].sort((a, b) => {
+                const dateA = parseLocalDate(a.date);
+                const dateB = parseLocalDate(b.date);
+                if (dateB - dateA !== 0) return dateB - dateA;
+                return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+              });
+              const latestTx = sorted[0];
+              const totalSpent = myGroupTxs.reduce((sum, t) => sum + (t.cost * t.quantity), 0);
+
+              consolidatedGroupEntries.push({
+                date: latestTx.date,
+                createdAt: latestTx.createdAt,
+                itemName: groupName, // just group name
+                category: 'Shared Cost',
+                cost: totalSpent, // total cost
+                quantity: 1,
+                totalPrice: totalSpent
+              });
+            }
+          });
+        }
+
         // Determine target budget
         const selectedPeriodBudget = user.budget || 0;
 
-        const filteredTotalSpent = personalTransactions.reduce((acc, t) => acc + (t.cost * t.quantity), 0);
+        const filteredTotalSpent = purePersonalTransactions.reduce((acc, t) => acc + (t.cost * t.quantity), 0) +
+          consolidatedGroupEntries.reduce((acc, g) => acc + g.cost, 0);
         const filteredRemainingBalance = selectedPeriodBudget - filteredTotalSpent;
 
         const getDaysInMonth = (month, year) => {
@@ -4919,9 +5325,12 @@ function App() {
 
         // Calculate category spend breakdown for the selected period
         const categoryTotals = {};
-        personalTransactions.forEach(t => {
+        purePersonalTransactions.forEach(t => {
           const amt = t.cost * t.quantity;
           categoryTotals[t.category] = (categoryTotals[t.category] || 0) + amt;
+        });
+        consolidatedGroupEntries.forEach(g => {
+          categoryTotals['Shared Cost'] = (categoryTotals['Shared Cost'] || 0) + g.cost;
         });
 
         const periodCategoryBreakdown = Object.entries(categoryTotals).map(([name, amount]) => {
@@ -4944,11 +5353,29 @@ function App() {
             });
           }
           
-          personalTransactions.forEach(t => {
+          purePersonalTransactions.forEach(t => {
             const tDate = parseLocalDate(t.date).toDateString();
             const match = days.find(day => day.dateString === tDate);
             if (match) {
               match.amount += t.cost * t.quantity;
+            }
+          });
+
+          transactions.forEach(t => {
+            const gid = t.group?._id || t.group || t.groupId;
+            if (gid && Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.includes(gid)) {
+              const isMy = myId && (
+                (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
+                (typeof t.user === 'string' && (t.user === myId || t.user === user?.id || t.user === user?._id)) ||
+                (t.user?.email && user?.email && t.user.email === user.email)
+              );
+              if (isMy) {
+                const tDate = parseLocalDate(t.date).toDateString();
+                const match = days.find(day => day.dateString === tDate);
+                if (match) {
+                  match.amount += t.cost * t.quantity;
+                }
+              }
             }
           });
           
@@ -4974,9 +5401,27 @@ function App() {
           
           csvContent += "COST ITEMS LIST\n";
           csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price\n";
-          personalTransactions.forEach(t => {
+          const reportItems = [
+            ...purePersonalTransactions.map(t => ({
+              date: t.date,
+              createdAt: t.createdAt,
+              itemName: t.itemName,
+              category: t.category,
+              cost: t.cost,
+              quantity: t.quantity,
+              totalPrice: t.cost * t.quantity
+            })),
+            ...consolidatedGroupEntries
+          ].sort((a, b) => {
+            const dateA = parseLocalDate(a.date);
+            const dateB = parseLocalDate(b.date);
+            if (dateB - dateA !== 0) return dateB - dateA;
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          });
+
+          reportItems.forEach(t => {
             const formattedDate = parseLocalDate(t.date).toLocaleDateString();
-            csvContent += `"${formattedDate}","${t.itemName.replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.cost * t.quantity}\n`;
+            csvContent += `"${formattedDate}","${(t.itemName || '').replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.totalPrice}\n`;
           });
 
           const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });

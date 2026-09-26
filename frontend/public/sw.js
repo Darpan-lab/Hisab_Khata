@@ -1,9 +1,11 @@
-const CACHE_NAME = 'hisab-khata-cache-v7';
+const CACHE_NAME = 'hisab-khata-cache-v8';
 const STATIC_PRECACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/favicon.svg?v=5'
+  '/favicon.png?v=6',
+  '/logo.png',
+  '/icon-192.png'
 ];
 
 // Install Event
@@ -90,8 +92,8 @@ self.addEventListener('push', (event) => {
     notification: {
       title: 'Hisab Khata',
       body: 'New activity in your shared group!',
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
       vibrate: [100, 50, 100],
       data: { url: '/' }
     }
@@ -105,8 +107,8 @@ self.addEventListener('push', (event) => {
         notification: {
           title: 'Hisab Khata',
           body: event.data.text(),
-          icon: '/favicon.svg',
-          badge: '/favicon.svg',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
           data: { url: '/' }
         }
       };
@@ -115,8 +117,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: payload.notification.body,
-    icon: payload.notification.icon || '/favicon.svg',
-    badge: payload.notification.badge || '/favicon.svg',
+    icon: payload.notification.icon || '/icon-192.png',
+    badge: payload.notification.badge || '/icon-192.png',
     vibrate: payload.notification.vibrate || [100, 50, 100],
     data: payload.notification.data || { url: '/' }
   };

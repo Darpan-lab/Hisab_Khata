@@ -3,15 +3,21 @@
   "name": "Hisab Khata - Expense Tracker",
   "icons": [
     {
-      "src": "/favicon.svg?v=4",
-      "type": "image/svg+xml",
-      "sizes": "any",
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "/favicon.svg?v=4",
-      "type": "image/svg+xml",
-      "sizes": "any",
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
       "purpose": "maskable"
     }
   ],

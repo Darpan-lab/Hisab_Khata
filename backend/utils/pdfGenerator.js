@@ -50,11 +50,14 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
   // Fetch relevant transactions in the current month
   let transactions;
   if (isPersonal) {
+    const linkedGroupIds = Array.isArray(user.linkedPersonalGroups) ? user.linkedPersonalGroups : [];
     transactions = await Transaction.find({
-      group: null,
-      user: userId,
+      $or: [
+        { group: null, user: userId },
+        { group: { $in: linkedGroupIds }, user: userId }
+      ],
       date: { $gte: startOfMonth, $lte: endOfMonth }
-    }).populate('user', 'username email');
+    }).populate('user', 'username email').populate('group', 'name');
   } else {
     transactions = await Transaction.find({
       group: groupId,
@@ -142,7 +145,11 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
       transactions.forEach(t => {
         const amount = t.cost * (t.quantity || 1);
         personalTotal += amount;
-        personalCategoryMap[t.category] = (personalCategoryMap[t.category] || 0) + amount;
+        if (t.group) {
+          personalCategoryMap['Shared Cost'] = (personalCategoryMap['Shared Cost'] || 0) + amount;
+        } else {
+          personalCategoryMap[t.category] = (personalCategoryMap[t.category] || 0) + amount;
+        }
       });
 
       const budget = user.budget || 0;
@@ -311,21 +318,68 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
 
     drawSectionHeader('2. Recent Expenses Log (Current Month)');
 
-    if (transactions.length > 0) {
+    let reportLogItems = [];
+    if (isPersonal) {
+      const purePersonalTxs = transactions.filter(t => !t.group);
+
+      // Consolidate shared group expenses: NO individual shared cost entries, just group name and total cost!
+      const groupMap = {};
+      transactions.filter(t => t.group).forEach(t => {
+        const gid = t.group._id ? t.group._id.toString() : t.group.toString();
+        const gName = cleanText(t.group.name || 'Shared Group');
+        if (!groupMap[gid]) {
+          groupMap[gid] = {
+            groupName: gName,
+            totalCost: 0,
+            latestDate: t.date
+          };
+        }
+        groupMap[gid].totalCost += t.cost * (t.quantity || 1);
+        if (new Date(t.date) > new Date(groupMap[gid].latestDate)) {
+          groupMap[gid].latestDate = t.date;
+        }
+      });
+
+      const consolidatedGroupEntries = Object.values(groupMap).map(g => ({
+        date: g.latestDate,
+        itemName: g.groupName, // just group name
+        cost: g.totalCost, // total cost
+        category: 'Shared Cost'
+      }));
+
+      reportLogItems = [
+        ...purePersonalTxs.map(t => ({
+          date: t.date,
+          itemName: cleanText(t.itemName),
+          cost: t.cost * (t.quantity || 1),
+          category: cleanText(t.category)
+        })),
+        ...consolidatedGroupEntries
+      ].sort((a, b) => new Date(b.date) - new Date(a.date));
+    } else {
+      reportLogItems = transactions
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .map(t => ({
+          date: t.date,
+          itemName: cleanText(t.itemName),
+          cost: t.cost * (t.quantity || 1),
+          category: cleanText(t.category),
+          payer: t.user ? cleanText(t.user.username) : 'Unknown'
+        }));
+    }
+
+    if (reportLogItems.length > 0) {
       const logHeaders = isPersonal
         ? ['Date', 'Item Name', 'Cost (Tk)', 'Category']
         : ['Date', 'Item Name', 'Cost (Tk)', 'Category', 'Paid By'];
       
-      const logRows = transactions
-        .sort((a, b) => new Date(b.date) - new Date(a.date))
+      const logRows = reportLogItems
         .slice(0, 20) // Limit to top 20 for brief report styling
-        .map(t => {
-          const dateStr = new Date(t.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
-          const payer = t.user ? cleanText(t.user.username) : 'Unknown';
-          const totalCost = t.cost * (t.quantity || 1);
+        .map(item => {
+          const dateStr = new Date(item.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
           return isPersonal
-            ? [dateStr, cleanText(t.itemName), totalCost.toLocaleString(), cleanText(t.category)]
-            : [dateStr, cleanText(t.itemName), totalCost.toLocaleString(), cleanText(t.category), payer];
+            ? [dateStr, item.itemName, item.cost.toLocaleString(), item.category]
+            : [dateStr, item.itemName, item.cost.toLocaleString(), item.category, item.payer];
         });
 
       const logColWidths = isPersonal ? [80, 200, 100, 130] : [65, 155, 75, 100, 115];
