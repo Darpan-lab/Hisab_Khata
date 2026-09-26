@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { 
   getTransactions, 
@@ -21,9 +21,7 @@ import {
   AlertCircle,
   CheckCircle,
   PlusCircle,
-  TrendingUp,
   Tag,
-  DollarSign,
   Layers,
   ChevronRight,
   User,
@@ -34,7 +32,6 @@ import {
   Users,
   UserPlus,
   Copy,
-  Share2,
   RefreshCw,
   UserMinus,
   Eye,
@@ -42,7 +39,11 @@ import {
   Shield,
   ArrowLeft,
   PieChart,
-  Bell
+  Bell,
+  Sun,
+  Moon,
+  Check,
+  X
 } from 'lucide-react';
 
 const API_BASE = '/api';
@@ -82,7 +83,10 @@ function App() {
   const [activeTab, setActiveTab] = useState('track'); // 'track', 'history', 'groups', 'settings'
   const [authMode, setAuthMode] = useState('login'); // 'login', 'signup'
   const [showPassword, setShowPassword] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'midnight');
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
 
   // Helper to get local date string in YYYY-MM-DD format
   const getLocalDateString = () => {
@@ -110,7 +114,7 @@ function App() {
   // Form States
   const [authForm, setAuthForm] = useState({ username: '', email: '', password: '' });
   const [transactionForm, setTransactionForm] = useState({ itemName: '', cost: '', quantity: '1', category: '', date: getLocalDateString(), groupId: '' });
-  const [categoryForm, setCategoryForm] = useState({ name: '', color: '#6366f1' });
+  const [categoryForm, setCategoryForm] = useState({ name: '', color: '#2563eb' });
   const [sheetUrlForm, setSheetUrlForm] = useState('');
   const [profileForm, setProfileForm] = useState({
     username: '',
@@ -158,9 +162,16 @@ function App() {
   // Apply selected theme class to document root element
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove('theme-midnight', 'theme-emerald', 'theme-cyberpunk', 'theme-minimalist');
-    root.classList.add(`theme-${theme}`);
+    root.classList.remove('theme-midnight', 'theme-emerald', 'theme-cyberpunk', 'theme-minimalist', 'theme-trust-blue', 'theme-slate', 'theme-dark', 'theme-light');
+    const activeClass = theme === 'light' ? 'theme-light' : 'theme-dark';
+    root.classList.add(activeClass);
+    root.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
     localStorage.setItem('theme', theme);
+
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.setAttribute('content', theme === 'light' ? '#ffffff' : '#0f172a');
+    }
   }, [theme]);
 
   // Sync profile editing form when user state changes
@@ -257,6 +268,19 @@ function App() {
   const [historyEndDate, setHistoryEndDate] = useState('');
   const [historySelectedMonth, setHistorySelectedMonth] = useState(() => new Date().getMonth());
   const [historySelectedYear, setHistorySelectedYear] = useState(() => new Date().getFullYear());
+  const [historyViewAll, setHistoryViewAll] = useState(false);
+  const currentMonthName = useMemo(() => new Date().toLocaleString('en-US', { month: 'long' }), []);
+  
+  // History Selection & Long-Press States
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
+  const longPressTimerRef = useRef(null);
+  const touchStartPosRef = useRef({ x: 0, y: 0 });
+  const isLongPressTriggeredRef = useRef(false);
+
+  // Clear selection if tab or filter changes
+  useEffect(() => {
+    setSelectedHistoryIds([]);
+  }, [activeTab, historyCategoryFilter, historyStartDate, historyEndDate]);
   
   // Settings Tab Category Scope State
   const [settingsCategoryScope, setSettingsCategoryScope] = useState('personal');
@@ -844,6 +868,7 @@ function App() {
 
   const handleDeleteTransaction = async (id) => {
     showConfirm('Are you sure you want to delete this transaction?', async () => {
+      setSelectedHistoryIds(prev => prev.filter(itemId => itemId !== id));
       if (id && id.startsWith && id.startsWith('temp-')) {
         setTransactions(prev => prev.filter(t => t._id !== id));
         const currentTrans = await getTransactions();
@@ -926,7 +951,7 @@ function App() {
       const currentCats = await getCategories();
       await saveCategories([...currentCats, localCat]);
 
-      setCategoryForm({ name: '', color: '#6366f1' });
+      setCategoryForm({ name: '', color: '#2563eb' });
       showAlert('Category saved locally. Will sync when online.', 'warning');
       return;
     }
@@ -941,7 +966,7 @@ function App() {
         const currentCats = await getCategories();
         await saveCategories([...currentCats, response.data.data]);
 
-        setCategoryForm({ name: '', color: '#6366f1' });
+        setCategoryForm({ name: '', color: '#2563eb' });
         showAlert('New category created!', 'success');
       }
     } catch (err) {
@@ -961,7 +986,7 @@ function App() {
         const currentCats = await getCategories();
         await saveCategories([...currentCats, localCat]);
 
-        setCategoryForm({ name: '', color: '#6366f1' });
+        setCategoryForm({ name: '', color: '#2563eb' });
         showAlert('Category saved locally. Will sync when online.', 'warning');
       } else {
         showAlert(err.response?.data?.message || 'Failed to create category', 'error');
@@ -1481,6 +1506,85 @@ function App() {
     return historyTransactions.reduce((acc, t) => acc + (t.cost * t.quantity), 0);
   }, [historyTransactions]);
 
+  const selectedHistoryTotal = useMemo(() => {
+    if (selectedHistoryIds.length === 0) return 0;
+    const idSet = new Set(selectedHistoryIds);
+    return historyTransactions
+      .filter(t => idSet.has(t._id))
+      .reduce((acc, t) => acc + (t.cost * t.quantity), 0);
+  }, [selectedHistoryIds, historyTransactions]);
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleHistoryPressStart = (id, e) => {
+    cancelLongPress();
+    isLongPressTriggeredRef.current = false;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    touchStartPosRef.current = { x: clientX, y: clientY };
+
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(40); } catch {}
+      }
+      setSelectedHistoryIds(prev => {
+        if (prev.includes(id)) {
+          return prev.filter(itemId => itemId !== id);
+        } else {
+          return [...prev, id];
+        }
+      });
+    }, 450);
+  };
+
+  const handleHistoryPressMove = (e) => {
+    if (!longPressTimerRef.current) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dist = Math.hypot(clientX - touchStartPosRef.current.x, clientY - touchStartPosRef.current.y);
+    if (dist > 8) {
+      cancelLongPress();
+    }
+  };
+
+  const handleHistoryPressEnd = () => {
+    cancelLongPress();
+  };
+
+  const handleHistoryItemClick = (id) => {
+    if (isLongPressTriggeredRef.current) {
+      isLongPressTriggeredRef.current = false;
+      return;
+    }
+    if (selectedHistoryIds.length > 0) {
+      setSelectedHistoryIds(prev => {
+        if (prev.includes(id)) {
+          return prev.filter(itemId => itemId !== id);
+        } else {
+          return [...prev, id];
+        }
+      });
+    }
+  };
+
+  const toggleSelectAllHistory = () => {
+    if (selectedHistoryIds.length === historyTransactions.length) {
+      setSelectedHistoryIds([]);
+    } else {
+      setSelectedHistoryIds(historyTransactions.map(t => t._id));
+    }
+  };
+
+  const clearHistorySelection = () => {
+    setSelectedHistoryIds([]);
+  };
+
   const activeGroupObj = useMemo(() => {
     if (filterGroup === 'personal') return null;
     return groups.find(g => g._id === filterGroup);
@@ -1616,6 +1720,44 @@ function App() {
 
   const totals = getTotals();
 
+  const currentMonthBurnData = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysPassed = Math.max(1, currentDay);
+    const daysRemaining = Math.max(0, daysInMonth - currentDay);
+    const dailyAvg = totals.month / daysPassed;
+    const projectedSpend = Math.round(dailyAvg * daysInMonth);
+    const remainingBalance = activeBudget - totals.month;
+
+    let estimatedDays = 'N/A';
+    if (activeBudget > 0) {
+      if (remainingBalance <= 0) {
+        estimatedDays = 0;
+      } else if (dailyAvg <= 0) {
+        estimatedDays = '∞';
+      } else {
+        estimatedDays = Math.ceil(remainingBalance / dailyAvg);
+      }
+    }
+
+    const safeDailyBudget = daysRemaining > 0 && remainingBalance > 0 
+      ? Math.round(remainingBalance / daysRemaining) 
+      : 0;
+
+    return {
+      currentDay,
+      daysInMonth,
+      daysPassed,
+      daysRemaining,
+      dailyAvg: Math.round(dailyAvg),
+      projectedSpend,
+      remainingBalance,
+      estimatedDays,
+      safeDailyBudget
+    };
+  }, [totals.month, activeBudget]);
+
   const getGroupMemberBreakdown = () => {
     if (filterGroup === 'personal') return null;
     
@@ -1659,7 +1801,104 @@ function App() {
 
   const memberBreakdown = getGroupMemberBreakdown();
 
+  const handleDownloadPersonalCSV = () => {
+    const personalTransactions = transactions.filter(t => !t.group);
+    let csvContent = "";
+    csvContent += `Personal Expense Report - ${user?.username || 'User'}\n`;
+    csvContent += `Generated On,${new Date().toLocaleDateString()}\n`;
+    csvContent += `Period,${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][historySelectedMonth]} ${historySelectedYear}\n`;
+    csvContent += `Monthly Budget,${user?.budget || 0}\n\n`;
+    csvContent += "COST ITEMS LIST\n";
+    csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price\n";
+    personalTransactions.forEach(t => {
+      const formattedDate = parseLocalDate(t.date).toLocaleDateString();
+      csvContent += `"${formattedDate}","${(t.itemName || '').replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.cost * t.quantity}\n`;
+    });
 
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${(user?.username || 'Personal').replace(/\s+/g, '_')}_Personal_Expense_Report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDownloadPersonalPDF = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=personal`, {
+        ...getHeaders(),
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${(user?.username || 'Personal').replace(/\s+/g, '_')}_Personal_Expense_Report.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Error downloading personal PDF:", err);
+      showAlert("Failed to download PDF report. Please try again.", "error");
+    }
+  };
+
+  const handleDownloadGroupCSV = (targetGroup) => {
+    if (!targetGroup) return;
+    const groupTransactions = transactions.filter(t => t.group && (t.group._id === targetGroup._id || t.group === targetGroup._id));
+    let csvContent = "";
+    csvContent += `Group Budget Report - ${targetGroup.name}\n`;
+    csvContent += `Generated On,${new Date().toLocaleDateString()}\n`;
+    csvContent += `Period,${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][historySelectedMonth]} ${historySelectedYear}\n`;
+    csvContent += `Group Budget,${targetGroup.budget || 0}\n\n`;
+    csvContent += "COST ITEMS LIST\n";
+    csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price,Added By\n";
+    groupTransactions.forEach(t => {
+      const addedBy = t.user?.username || (t.user?._id === user?.id || t.user === user?.id ? 'Me' : 'Unknown');
+      const formattedDate = parseLocalDate(t.date).toLocaleDateString();
+      csvContent += `"${formattedDate}","${(t.itemName || '').replace(/"/g, '""')}","${t.category}",${t.cost},${t.quantity},${t.cost * t.quantity},"${addedBy}"\n`;
+    });
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${targetGroup.name.replace(/\s+/g, '_')}_Budget_Report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDownloadGroupPDF = async (targetGroup) => {
+    if (!targetGroup) return;
+    try {
+      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=${targetGroup._id}`, {
+        ...getHeaders(),
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${targetGroup.name.replace(/\s+/g, '_')}_Budget_Report.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Error downloading group PDF:", err);
+      showAlert("Failed to download PDF report. Please try again.", "error");
+    }
+  };
+
+  const handleOpenAnalyticsForScope = () => {
+    if (filterGroup === 'personal') {
+      setPersonalBudgetInput(user?.budget || '');
+      setShowPersonalAnalytics(true);
+    } else if (activeGroupObj) {
+      setGroupBudgetInput(activeGroupObj.budget || '');
+      setSelectedGroupDetails(activeGroupObj);
+    }
+  };
 
   const getGroupDailyTrend = (group) => {
     if (!group) return [];
@@ -1862,7 +2101,27 @@ function App() {
           </div>
         </div>
         
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          {/* Dark / Light Mode Toggle */}
+          <button
+            onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '4px',
+              transition: 'color var(--transition-fast)'
+            }}
+            title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            aria-label="Toggle dark/light mode"
+          >
+            {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+          </button>
+
           {/* Notification Bell */}
           <div style={{ position: 'relative' }}>
             <button
@@ -1901,7 +2160,7 @@ function App() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 0 0 2px var(--bg-color, #111827)'
+                  border: '2px solid var(--bg-secondary, #0f172a)'
                 }}>
                   {unreadNotificationsCount}
                 </span>
@@ -1912,7 +2171,7 @@ function App() {
         </div>
       </header>
 
-      {/* Notifications Modal (New Window Style) */}
+      {/* Notifications Modal (Flat Window Style) */}
       {showNotificationsTray && (
         <div style={{
           position: 'fixed',
@@ -1920,8 +2179,7 @@ function App() {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(8px)',
+          background: 'rgba(10, 15, 29, 0.75)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -1934,11 +2192,11 @@ function App() {
             maxHeight: '80vh',
             display: 'flex',
             flexDirection: 'column',
-            padding: '24px',
-            borderRadius: '16px',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+            padding: '20px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-lg)',
             border: '1px solid var(--card-border)',
-            backgroundColor: '#1e293b', // Opaque Slate 800 background
+            backgroundColor: 'var(--card-bg, #1e293b)',
             margin: 0,
             overflow: 'hidden'
           }}>
@@ -1953,14 +2211,14 @@ function App() {
                   <button
                     onClick={clearNotifications}
                     style={{
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.2)',
+                      background: 'var(--danger-bg)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
                       color: 'var(--danger-color)',
                       fontSize: '12px',
                       fontWeight: '600',
                       cursor: 'pointer',
                       padding: '6px 12px',
-                      borderRadius: '8px',
+                      borderRadius: 'var(--radius-sm)',
                       transition: 'background var(--transition-fast)'
                     }}
                     title="Delete all notifications permanently"
@@ -1973,14 +2231,14 @@ function App() {
                   <button
                     onClick={() => markNotificationsAsRead()}
                     style={{
-                      background: 'rgba(99, 102, 241, 0.1)',
-                      border: '1px solid rgba(99, 102, 241, 0.2)',
+                      background: 'var(--primary-light)',
+                      border: '1px solid var(--primary-border)',
                       color: 'var(--primary-color)',
                       fontSize: '12px',
                       fontWeight: '600',
                       cursor: 'pointer',
                       padding: '6px 12px',
-                      borderRadius: '8px',
+                      borderRadius: 'var(--radius-sm)',
                       transition: 'background var(--transition-fast)'
                     }}
                   >
@@ -2006,7 +2264,7 @@ function App() {
             </div>
 
             {/* Modal Body / Scroll Content */}
-            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px', minHeight: '120px' }}>
+            <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px', minHeight: '120px' }}>
               {notifications.length === 0 ? (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13.5px', padding: '40px 0' }}>
                   No notifications yet.
@@ -2026,12 +2284,12 @@ function App() {
                     }}
                     style={{
                       padding: '12px',
-                      background: n.isRead ? 'rgba(255, 255, 255, 0.01)' : 'rgba(99, 102, 241, 0.06)',
+                      background: n.isRead ? 'transparent' : 'var(--primary-light)',
                       border: '1px solid',
-                      borderColor: n.isRead ? 'var(--card-border)' : 'rgba(99, 102, 241, 0.25)',
-                      borderRadius: '10px',
+                      borderColor: n.isRead ? 'var(--card-border)' : 'var(--primary-border)',
+                      borderRadius: 'var(--radius-sm)',
                       cursor: 'pointer',
-                      transition: 'all 0.2s',
+                      transition: 'all var(--transition-fast)',
                       display: 'flex',
                       alignItems: 'flex-start',
                       gap: '12px'
@@ -2094,7 +2352,7 @@ function App() {
             
             {/* Filter Scope Selector if user has groups */}
             {groups.length > 0 && (
-              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'var(--surface-subtle)', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
                 <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Users size={16} /> Scope:
                 </span>
@@ -2120,7 +2378,7 @@ function App() {
               </div>
               <div className="glass-card" style={{ marginBottom: 0, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>This Month</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{currentMonthName}</span>
                   {activeBudget > 0 && (
                     <span style={{ 
                       fontSize: '11px', 
@@ -2135,6 +2393,16 @@ function App() {
                   )}
                 </div>
                 <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--primary-color)' }}>৳{totals.month.toLocaleString()}</span>
+                {activeBudget > 0 && (
+                  <span style={{ 
+                    fontSize: '11px', 
+                    color: (activeBudget - totals.month) < 0 ? 'var(--danger-color)' : 'var(--text-muted)',
+                    fontWeight: 500,
+                    marginTop: '2px'
+                  }}>
+                    Remaining: ৳{(activeBudget - totals.month).toLocaleString()}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -2239,11 +2507,11 @@ function App() {
             {memberBreakdown && (
               <div className="glass-card animate-fade-in" style={{ padding: '16px', marginBottom: '16px', borderLeft: '4px solid var(--primary-color)' }}>
                 <h3 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Users size={16} style={{ color: 'var(--primary-color)' }} /> Member Breakdown (This Group)
+                  <Users size={16} style={{ color: 'var(--primary-color)' }} /> Member Breakdown
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {memberBreakdown.map(member => (
-                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         {renderAvatar(member.profilePic, 32)}
                         <div>
@@ -2304,7 +2572,7 @@ function App() {
                               </span>
                             )}
                             {t.group && (
-                              <span className="badge" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
                                 👥 {t.group.name || t.group}
                               </span>
                             )}
@@ -2341,7 +2609,7 @@ function App() {
           <div>
             {/* Filter Scope Selector if user has groups */}
             {groups.length > 0 && (
-              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'var(--surface-subtle)', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
                 <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Users size={16} /> Scope:
                 </span>
@@ -2362,7 +2630,7 @@ function App() {
             <div className="glass-card" style={{ marginBottom: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
-                  Remaining Balance (This Month)
+                  Remaining Balance ({currentMonthName})
                 </span>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                   Scope: {filterGroup === 'personal' ? 'Personal' : activeGroupObj?.name || 'Group'}
@@ -2385,7 +2653,7 @@ function App() {
                   </div>
                   
                   {/* Progress bar */}
-                  <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: '100%', height: '8px', background: 'var(--chart-empty-bar)', borderRadius: '4px', overflow: 'hidden' }}>
                     <div style={{ 
                       width: `${Math.min((totals.month / activeBudget) * 100, 100)}%`, 
                       height: '100%', 
@@ -2399,6 +2667,47 @@ function App() {
                       ⚠️ Monthly budget exceeded for this scope!
                     </span>
                   )}
+
+                  {/* Burn rate projection */}
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--surface-subtle)',
+                    border: '1px solid var(--card-border)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-color)' }}>
+                        Burn rate projection
+                      </span>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                        Pace: ৳{currentMonthBurnData.dailyAvg.toLocaleString()}/day
+                      </span>
+                    </div>
+
+                    <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', lineHeight: '1.5' }}>
+                      {currentMonthBurnData.remainingBalance <= 0 ? (
+                        <span style={{ color: 'var(--danger-color)', fontWeight: 600 }}>
+                          ⚠️ Budget exhausted! You have spent more than your allocated budget.
+                        </span>
+                      ) : (
+                        <>
+                          Based on your current monthly burn rate, your remaining budget is estimated to last{' '}
+                          <strong style={{ color: typeof currentMonthBurnData.estimatedDays === 'number' && currentMonthBurnData.estimatedDays < currentMonthBurnData.daysRemaining ? 'var(--warning-color)' : 'var(--success-color)' }}>
+                            {currentMonthBurnData.estimatedDays === '∞' ? 'the entire month' : `${currentMonthBurnData.estimatedDays} days`}
+                          </strong>.
+                          {currentMonthBurnData.daysRemaining > 0 && (
+                            <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              {currentMonthBurnData.daysRemaining} days left in {currentMonthName} • Safe daily target: ৳{currentMonthBurnData.safeDailyBudget.toLocaleString()}/day
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div style={{ padding: '4px 0' }}>
@@ -2418,6 +2727,11 @@ function App() {
               <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '4px' }}>History Logs</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px' }}>
                 Manage all recorded spends. Total items filtered: {historyTransactions.length}.
+                {selectedHistoryIds.length === 0 && (
+                  <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    💡 Tip: Press and hold any entry to calculate total spent of selected entries.
+                  </span>
+                )}
               </p>
 
               {/* Category Filter and Sorting Controls */}
@@ -2528,9 +2842,9 @@ function App() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--card-border)', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px 16px', borderRadius: 'var(--radius-md)', background: 'var(--surface-subtle)', border: '1px solid var(--card-border)', marginBottom: '16px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {historyCategoryFilter === 'all' ? 'Life-time aggregate spent' : `Total spent on ${historyCategoryFilter}`}
+                  {historyCategoryFilter === 'all' ? 'Total spent' : `Total spent on ${historyCategoryFilter}`}
                 </span>
                 <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--primary-color)' }}>৳{historyTotal.toLocaleString()}</span>
               </div>
@@ -2541,22 +2855,75 @@ function App() {
                     No recorded data found.
                   </div>
                 ) : (
-                  historyTransactions.map(t => {
+                  (historyViewAll ? historyTransactions : historyTransactions.slice(0, 5)).map(t => {
                     const matchedCat = categories.find(c => c.name === t.category);
                     const catColor = matchedCat?.color || 'var(--text-muted)';
+                    const isSelected = selectedHistoryIds.includes(t._id);
+                    const isSelectionMode = selectedHistoryIds.length > 0;
                     return (
                       <div
                         key={t._id}
                         className="glass-card animate-fade-in"
+                        onMouseDown={(e) => handleHistoryPressStart(t._id, e)}
+                        onMouseMove={handleHistoryPressMove}
+                        onMouseUp={handleHistoryPressEnd}
+                        onMouseLeave={handleHistoryPressEnd}
+                        onTouchStart={(e) => handleHistoryPressStart(t._id, e)}
+                        onTouchMove={handleHistoryPressMove}
+                        onTouchEnd={handleHistoryPressEnd}
+                        onTouchCancel={handleHistoryPressEnd}
+                        onContextMenu={(e) => {
+                          if (isSelectionMode || isLongPressTriggeredRef.current) {
+                            e.preventDefault();
+                          }
+                        }}
+                        onClick={() => handleHistoryItemClick(t._id)}
                         style={{
                           marginBottom: 0,
                           padding: '16px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          background: 'rgba(30, 41, 59, 0.25)'
+                          cursor: isSelectionMode ? 'pointer' : 'default',
+                          userSelect: 'none',
+                          WebkitUserSelect: 'none',
+                          WebkitTouchCallout: 'none',
+                          backgroundColor: isSelected 
+                            ? (theme === 'light' ? '#e0edff' : 'rgba(37, 99, 235, 0.16)') 
+                            : undefined,
+                          borderColor: isSelected ? 'var(--primary-color)' : undefined,
+                          boxShadow: isSelected ? '0 0 0 1px var(--primary-color)' : undefined,
+                          transition: 'background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease'
                         }}
                       >
+                        {isSelectionMode && (
+                          <div 
+                            style={{ 
+                              marginRight: '12px', 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '50%',
+                                border: isSelected ? 'none' : '2px solid var(--card-border)',
+                                backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} />}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="transaction-info" style={{ flex: 1, paddingRight: '12px' }}>
                           <span className="transaction-name" style={{ fontSize: '16px' }}>{t.itemName}</span>
                           <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px', margin: '4px 0' }}>
@@ -2569,7 +2936,7 @@ function App() {
                               </span>
                             )}
                             {t.group && (
-                              <span className="badge" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
                                 👥 {t.group.name || t.group}
                               </span>
                             )}
@@ -2593,7 +2960,12 @@ function App() {
                           <span style={{ fontSize: '18px', fontWeight: '700' }}>৳{(t.cost * t.quantity).toLocaleString()}</span>
                           {(t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
                             <button
-                              onClick={() => handleDeleteTransaction(t._id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTransaction(t._id);
+                              }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onTouchStart={(e) => e.stopPropagation()}
                               style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '6px', borderRadius: '8px', transition: 'background 0.2s' }}
                               title="Delete transaction"
                               disabled={syncLoading}
@@ -2606,8 +2978,59 @@ function App() {
                     );
                   })
                 )}
+
+                {historyTransactions.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => setHistoryViewAll(!historyViewAll)}
+                    className="secondary-btn"
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                      padding: '10px',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      marginTop: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {historyViewAll ? 'View Less' : `View All (${historyTransactions.length})`}
+                  </button>
+                )}
               </div>
             </div>
+
+            {/* Member contribution breakdown for groups in History tab */}
+            {memberBreakdown && (
+              <div className="glass-card animate-fade-in" style={{ marginTop: '16px', padding: '16px', borderLeft: '4px solid var(--primary-color)' }}>
+                <h3 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Users size={16} style={{ color: 'var(--primary-color)' }} /> Member Breakdown
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {memberBreakdown.map(member => (
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {renderAvatar(member.profilePic, 32)}
+                        <div>
+                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                            {member.username} {member.email === user?.email ? '(Me)' : ''}
+                          </span>
+                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>{member.email}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', display: 'block' }}>
+                          Today: ৳{member.today.toLocaleString()}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: '600' }}>
+                          Month: ৳{member.month.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Category Spend Breakdown Section */}
             <div className="glass-card" style={{ marginTop: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -2619,7 +3042,7 @@ function App() {
               </p>
 
               {/* Month/Year Selectors */}
-              <div style={{ display: 'flex', gap: '10px', background: 'rgba(255,255,255,0.01)', padding: '10px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
+              <div style={{ display: 'flex', gap: '10px', background: 'var(--surface-subtle)', padding: '10px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Month</label>
                   <select
@@ -2649,7 +3072,7 @@ function App() {
               </div>
 
               {/* Target Budget and Remaining Balance display for the selected period */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface-subtle)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
                 <div>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Period Budget Target</span>
                   <span style={{ fontSize: '16px', fontWeight: '800' }}>
@@ -2688,7 +3111,7 @@ function App() {
                       </div>
                       
                       {/* Progress Bar representing percentage of total month spend */}
-                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.04)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ width: '100%', height: '6px', background: 'var(--chart-empty-bar)', borderRadius: '3px', overflow: 'hidden' }}>
                         <div style={{ 
                           width: `${item.percentage}%`, 
                           height: '100%', 
@@ -2711,6 +3134,151 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* Analytics & Reports Section - Adapts to every scope selected */}
+            <div className="glass-card" style={{ marginTop: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: '800', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <PieChart size={18} style={{ color: 'var(--primary-color)' }} /> Analytics & Reports
+                </h3>
+                <span className="badge" style={{ background: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>
+                  {filterGroup === 'personal' ? 'Personal' : activeGroupObj?.name || 'Group'}
+                </span>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>
+                View complete spending insights, daily averages, burn rate projection, and export reports for {filterGroup === 'personal' ? 'Personal' : activeGroupObj?.name || 'this group'}.
+              </p>
+
+              {/* Quick Export Controls */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    if (filterGroup === 'personal') {
+                      handleDownloadPersonalPDF();
+                    } else if (activeGroupObj) {
+                      handleDownloadGroupPDF(activeGroupObj);
+                    }
+                  }}
+                  className="secondary-btn"
+                  style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid var(--primary-border)', background: 'var(--primary-light)', color: 'var(--primary-color)' }}
+                >
+                  📄 PDF Report
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    if (filterGroup === 'personal') {
+                      handleDownloadPersonalCSV();
+                    } else if (activeGroupObj) {
+                      handleDownloadGroupCSV(activeGroupObj);
+                    }
+                  }}
+                  className="secondary-btn"
+                  style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid rgba(16, 185, 129, 0.25)', background: 'rgba(16, 185, 129, 0.08)' }}
+                >
+                  📊 Sheet (CSV)
+                </button>
+              </div>
+
+              <button 
+                type="button" 
+                onClick={handleOpenAnalyticsForScope}
+                className="gradient-btn" 
+                style={{ width: '100%', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                <PieChart size={16} /> Open Detailed Analytics
+              </button>
+            </div>
+
+            {/* Floating Multi-Selection Summary Dock */}
+            {selectedHistoryIds.length > 0 && (
+              <div
+                style={{
+                  position: 'fixed',
+                  bottom: '76px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  width: 'calc(100% - 32px)',
+                  maxWidth: '460px',
+                  backgroundColor: 'var(--card-bg)',
+                  border: '1.5px solid var(--primary-color)',
+                  borderRadius: 'var(--radius-lg)',
+                  boxShadow: 'var(--shadow-lg)',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  zIndex: 90,
+                  backdropFilter: 'blur(8px)',
+                  animation: 'fadeIn 0.2s ease-in-out'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div
+                    style={{
+                      background: 'var(--primary-color)',
+                      color: '#ffffff',
+                      borderRadius: '50%',
+                      width: '26px',
+                      height: '26px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '12px',
+                      fontWeight: '700'
+                    }}
+                  >
+                    {selectedHistoryIds.length}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Selected Total Spent
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                      ৳{selectedHistoryTotal.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAllHistory}
+                    style={{
+                      background: 'var(--surface-subtle)',
+                      border: '1px solid var(--card-border)',
+                      color: 'var(--text-primary)',
+                      padding: '6px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {selectedHistoryIds.length === historyTransactions.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearHistorySelection}
+                    style={{
+                      background: 'var(--primary-color)',
+                      border: 'none',
+                      color: '#ffffff',
+                      padding: '6px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <X size={14} /> Done
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2790,13 +3358,13 @@ function App() {
                     const inviteCopied = copiedCode === g.inviteCode;
 
                     return (
-                      <div key={g._id} className="glass-card" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(30, 41, 59, 0.3)' }}>
+                      <div key={g._id} className="glass-card" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
                           <div>
                             <h4 style={{ fontSize: '17px', fontWeight: '700', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                               {g.name}
                               {g.budget > 0 && (
-                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--primary-color)', background: 'rgba(99, 102, 241, 0.1)', padding: '2px 8px', borderRadius: '6px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--primary-color)', background: 'var(--primary-light)', border: '1px solid var(--primary-border)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
                                   Budget: ৳{g.budget.toLocaleString()}
                                 </span>
                               )}
@@ -2842,7 +3410,7 @@ function App() {
                         </div>
 
                         {/* Invite Code widget */}
-                        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ background: 'var(--surface-subtle)', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
                             <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Invite Code</span>
                             <span style={{ fontSize: '15px', fontWeight: '700', letterSpacing: '0.05em', color: 'var(--primary-color)' }}>{g.inviteCode}</span>
@@ -2885,7 +3453,7 @@ function App() {
                                 key={member._id}
                                 className="badge"
                                 style={{
-                                  backgroundColor: 'rgba(255,255,255,0.04)',
+                                  backgroundColor: 'var(--surface-subtle)',
                                   color: 'var(--text-secondary)',
                                   border: '1px solid var(--card-border)',
                                   fontSize: '11px',
@@ -2995,7 +3563,7 @@ function App() {
                   <button
                     onClick={() => setShowAdminPanel(false)}
                     style={{ 
-                      background: 'rgba(255,255,255,0.05)',
+                      background: 'var(--secondary-btn-bg)',
                       border: '1px solid var(--card-border)',
                       color: 'var(--text-primary)',
                       cursor: 'pointer',
@@ -3017,7 +3585,7 @@ function App() {
                 </div>
 
                 {/* Sign up configuration card */}
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
+                <div style={{ background: 'var(--surface-subtle)', border: '1px solid var(--card-border)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: '14px', fontWeight: '600' }}>Pause New Sign-ups</span>
@@ -3037,7 +3605,7 @@ function App() {
                         position: 'absolute',
                         cursor: 'pointer',
                         top: 0, left: 0, right: 0, bottom: 0,
-                        backgroundColor: adminSignupPaused ? 'var(--danger-color)' : 'rgba(255,255,255,0.1)',
+                        backgroundColor: adminSignupPaused ? 'var(--danger-color)' : 'var(--card-border)',
                         transition: '.4s',
                         borderRadius: '24px',
                         border: '1px solid var(--card-border)',
@@ -3078,7 +3646,7 @@ function App() {
                           <div
                             key={u._id}
                             style={{
-                              background: 'rgba(255,255,255,0.02)',
+                              background: 'var(--surface-subtle)',
                               border: '1px solid var(--card-border)',
                               borderRadius: '12px',
                               padding: '12px 16px',
@@ -3094,7 +3662,7 @@ function App() {
                                 <span style={{ fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   {u.username}
                                   {(u.role === 'admin' || u.username === 'rkdarpan') && (
-                                    <span style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.2)', color: 'var(--primary-color)', padding: '2px 6px', borderRadius: '12px', fontWeight: '600' }}>
+                                    <span style={{ fontSize: '10px', background: 'var(--primary-light)', border: '1px solid var(--primary-border)', color: 'var(--primary-color)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', fontWeight: '600' }}>
                                       Admin
                                     </span>
                                   )}
@@ -3133,7 +3701,7 @@ function App() {
                                       setNewPasswordForUser('');
                                     }}
                                     style={{
-                                      background: 'rgba(255, 255, 255, 0.04)',
+                                      background: 'var(--secondary-btn-bg)',
                                       border: '1px solid var(--card-border)',
                                       color: 'var(--text-secondary)',
                                       cursor: 'pointer',
@@ -3200,18 +3768,18 @@ function App() {
                           fetchAdminData();
                         }}
                         style={{
-                          background: 'rgba(99, 102, 241, 0.15)',
-                          border: '1px solid rgba(99, 102, 241, 0.3)',
+                          background: 'var(--primary-light)',
+                          border: '1px solid var(--primary-border)',
                           color: 'var(--primary-color)',
                           cursor: 'pointer',
                           padding: '6px 12px',
-                          borderRadius: '8px',
+                          borderRadius: 'var(--radius-sm)',
                           fontSize: '12.5px',
                           fontWeight: '600',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '6px',
-                          transition: 'all 0.2s'
+                          transition: 'all var(--transition-fast)'
                         }}
                         title="Enter Admin Control Panel"
                         className="admin-control-btn"
@@ -3253,7 +3821,7 @@ function App() {
                           alignItems: 'center', 
                           gap: '6px',
                           border: '1px solid var(--card-border)',
-                          background: 'rgba(255,255,255,0.03)'
+                          background: 'var(--surface-subtle)'
                         }}
                       >
                         Upload Photo
@@ -3295,7 +3863,7 @@ function App() {
                           height: '40px',
                           borderRadius: '50%',
                           border: profileForm.profilePic === avatar ? '2px solid var(--primary-color)' : '1px solid var(--card-border)',
-                          background: 'rgba(255,255,255,0.05)',
+                          background: 'var(--surface-subtle)',
                           fontSize: '20px',
                           display: 'flex',
                           alignItems: 'center',
@@ -3417,86 +3985,6 @@ function App() {
               </form>
             </div>
 
-            {/* Theme Settings Section */}
-            <div className="glass-card">
-              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Layers size={18} style={{ color: 'var(--primary-color)' }} /> App Theme
-              </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
-                Choose a modern and vibrant color palette for your Hisab Khata interface.
-              </p>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px' }}>
-                {[
-                  { id: 'midnight', name: 'Midnight Indigo', gradient: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)' },
-                  { id: 'emerald', name: 'Emerald Neon', gradient: 'linear-gradient(135deg, #059669 0%, #06b6d4 100%)' },
-                  { id: 'cyberpunk', name: 'Cyberpunk Dream', gradient: 'linear-gradient(135deg, #ec4899 0%, #06b6d4 100%)' },
-                  { id: 'minimalist', name: 'Minimalist Slate', gradient: 'linear-gradient(135deg, #9ca3af 0%, #4b5563 100%)' }
-                ].map(t => {
-                  const isSelected = theme === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTheme(t.id)}
-                      style={{
-                        background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-                        border: isSelected ? '2px solid var(--primary-color)' : '1px solid var(--card-border)',
-                        borderRadius: '12px',
-                        padding: '12px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: '8px',
-                        transition: 'all var(--transition-fast)',
-                        textAlign: 'center',
-                        outline: 'none',
-                        width: '100%'
-                      }}
-                    >
-                      <div style={{
-                        width: '100%',
-                        height: '24px',
-                        borderRadius: '6px',
-                        background: t.gradient,
-                        boxShadow: isSelected ? '0 0 10px rgba(255, 255, 255, 0.1)' : 'none'
-                      }} />
-                      <span style={{ 
-                        fontSize: '13px', 
-                        fontWeight: '600', 
-                        color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'
-                      }}>
-                        {t.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Personal Analytics & Reports Section */}
-            <div className="glass-card">
-              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <PieChart size={18} style={{ color: 'var(--primary-color)' }} /> Personal Analytics & Reports
-              </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
-                View your personal spending breakdown, daily averages, burn rate projection, and generate PDF or CSV reports.
-              </p>
-              
-              <button 
-                type="button" 
-                onClick={() => {
-                  setPersonalBudgetInput(user?.budget || '');
-                  setShowPersonalAnalytics(true);
-                }}
-                className="gradient-btn" 
-                style={{ width: '100%', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-              >
-                <PieChart size={16} /> Open Personal Analytics
-              </button>
-            </div>
-
             {/* Google Sheets Sync Settings */}
             <div className="glass-card">
               <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3549,7 +4037,7 @@ function App() {
                   <p>2. Open <strong>Extensions &gt; Apps Script</strong>.</p>
                   <p>3. Delete any default code and paste this script:</p>
                   <div style={{ position: 'relative' }}>
-                    <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 36px 12px 12px', borderRadius: '8px', overflowX: 'auto', fontSize: '11px', fontFamily: 'monospace', color: '#a5b4fc', border: '1px solid var(--card-border)', maxHeight: '200px' }}>
+                    <pre style={{ background: 'var(--bg-primary)', padding: '12px 36px 12px 12px', borderRadius: '8px', overflowX: 'auto', fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-primary)', border: '1px solid var(--card-border)', maxHeight: '200px' }}>
 {`function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
@@ -3764,7 +4252,7 @@ function App() {
                         position: 'absolute',
                         top: '8px',
                         right: '8px',
-                        background: 'rgba(255, 255, 255, 0.08)',
+                        background: 'var(--surface-subtle-hover)',
                         border: '1px solid var(--card-border)',
                         borderRadius: '6px',
                         padding: '6px',
@@ -3826,7 +4314,7 @@ function App() {
                   ⚠️ Only the group creator ({groups.find(g => g._id === settingsCategoryScope)?.owner?.username || 'Group Owner'}) can create or manage custom categories for this group.
                 </div>
               ) : (
-                <form onSubmit={handleCategorySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', padding: '14px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--card-border)' }}>
+                <form onSubmit={handleCategorySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', padding: '14px', borderRadius: '12px', background: 'var(--surface-subtle)', border: '1px solid var(--card-border)' }}>
                   <h4 style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Add Custom Category</h4>
                   
                   <div className="form-row">
@@ -3868,7 +4356,7 @@ function App() {
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto', paddingRight: '4px' }}>
                 {settingsCategories.map(cat => (
-                  <div key={cat._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                  <div key={cat._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: cat.color }}></span>
                       <span style={{ fontWeight: 500 }}>{cat.name}</span>
@@ -3897,7 +4385,7 @@ function App() {
                 Receive real-time push alerts on this device when other members add or edit costs in your joined groups.
               </p>
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px', background: 'var(--surface-subtle)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '14px', fontWeight: '600' }}>
                     {isSubscribedToPush ? 'Push Alerts Enabled' : 'Push Alerts Disabled'}
@@ -3938,37 +4426,30 @@ function App() {
               </div>
             </div>
 
-            {/* Session Management & Log Out */}
-            <div className="glass-card" style={{ border: '1px solid rgba(239, 68, 68, 0.2)', background: 'rgba(239, 68, 68, 0.02)', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger-color)' }}>
-                <LogOut size={18} /> Session Management
-              </h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
-                Logout of your current account session on this device.
-              </p>
-              
-              <button 
-                type="button" 
-                onClick={handleLogout}
-                className="secondary-btn" 
-                style={{ 
-                  width: '100%', 
-                  padding: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '8px',
-                  color: 'var(--danger-color)',
-                  borderColor: 'rgba(239, 68, 68, 0.2)',
-                  background: 'rgba(239, 68, 68, 0.05)',
-                  cursor: 'pointer',
-                  borderRadius: '10px',
-                  fontWeight: '600'
-                }}
-              >
-                <LogOut size={16} /> Log Out of App
-              </button>
-            </div>
+            {/* Log Out button at bottom of settings */}
+            <button 
+              type="button" 
+              onClick={handleLogout}
+              className="secondary-btn" 
+              style={{ 
+                width: '100%', 
+                padding: '12px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                gap: '8px',
+                color: 'var(--danger-color)',
+                borderColor: 'rgba(239, 68, 68, 0.25)',
+                background: 'rgba(239, 68, 68, 0.06)',
+                cursor: 'pointer',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: '600',
+                marginTop: '16px',
+                marginBottom: '24px'
+              }}
+            >
+              <LogOut size={16} /> Log Out
+            </button>
           </>
         )}
       </div>
@@ -4162,8 +4643,7 @@ function App() {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(15, 23, 42, 0.8)',
-            backdropFilter: 'blur(10px)',
+            background: 'rgba(10, 15, 29, 0.75)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -4175,13 +4655,14 @@ function App() {
               width: '100%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              padding: '24px',
-              borderRadius: '16px',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '20px',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: 'var(--shadow-lg)',
+              border: '1px solid var(--card-border)',
+              backgroundColor: 'var(--card-bg, #1e293b)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '20px'
+              gap: '18px'
             }}>
               {/* Modal Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
@@ -4196,7 +4677,7 @@ function App() {
                 <button
                   onClick={() => setSelectedGroupDetails(null)}
                   style={{
-                    background: 'rgba(255,255,255,0.05)',
+                    background: 'var(--secondary-btn-bg)',
                     border: 'none',
                     color: 'var(--text-primary)',
                     borderRadius: '50%',
@@ -4214,7 +4695,7 @@ function App() {
               </div>
 
               {/* Budget Settings Form (All members can set) */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Set Group Budget
                 </h4>
@@ -4242,7 +4723,7 @@ function App() {
               </div>
 
               {/* Filter Period & Export Controls */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Filter Period & Export
                 </h4>
@@ -4280,14 +4761,14 @@ function App() {
                   <button 
                     onClick={handleDownloadPDF}
                     className="secondary-btn"
-                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: '8px', gap: '6px', border: '1px solid rgba(99, 102, 241, 0.2)', background: 'rgba(99, 102, 241, 0.05)' }}
+                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid var(--primary-border)', background: 'var(--primary-light)', color: 'var(--primary-color)' }}
                   >
                     📄 PDF Report
                   </button>
                   <button 
                     onClick={handleDownloadSheet}
                     className="secondary-btn"
-                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: '8px', gap: '6px', border: '1px solid rgba(16, 185, 129, 0.2)', background: 'rgba(16, 185, 129, 0.05)' }}
+                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid rgba(16, 185, 129, 0.25)', background: 'rgba(16, 185, 129, 0.08)' }}
                   >
                     📊 Sheet (CSV)
                   </button>
@@ -4311,7 +4792,7 @@ function App() {
               </div>
 
               {/* Burn Projection Widget */}
-              <div style={{ background: 'rgba(99, 102, 241, 0.05)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(99, 102, 241, 0.15)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ background: 'var(--primary-light)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary-border)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-color)' }}>
                   Burn rate projection
                 </span>
@@ -4331,13 +4812,13 @@ function App() {
               </div>
 
               {/* Member Breakdown Section */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Member Consumption
                 </h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
                   {memberAnalyticsList.map(member => (
-                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
                       <div>
                         <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
                           {member.username}
@@ -4370,9 +4851,9 @@ function App() {
                         <div style={{
                           width: '18px',
                           height: `${Math.max(pct, 4)}px`,
-                          background: day.amount > 0 ? 'linear-gradient(180deg, var(--primary-color) 0%, rgba(99, 102, 241, 0.4) 100%)' : 'rgba(255,255,255,0.05)',
-                          borderRadius: '4px',
-                          transition: 'height 0.3s ease'
+                          background: day.amount > 0 ? 'var(--primary-color)' : 'var(--chart-empty-bar)',
+                          borderRadius: '3px',
+                          transition: 'height 0.2s ease'
                         }} />
                         <span style={{ fontSize: '9px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                           {day.label}
@@ -4534,8 +5015,7 @@ function App() {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(15, 23, 42, 0.8)',
-            backdropFilter: 'blur(10px)',
+            background: 'rgba(10, 15, 29, 0.75)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -4547,13 +5027,14 @@ function App() {
               width: '100%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              padding: '24px',
-              borderRadius: '16px',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              padding: '20px',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: 'var(--shadow-lg)',
+              border: '1px solid var(--card-border)',
+              backgroundColor: 'var(--card-bg, #1e293b)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '20px'
+              gap: '18px'
             }}>
               {/* Modal Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
@@ -4568,7 +5049,7 @@ function App() {
                 <button
                   onClick={() => setShowPersonalAnalytics(false)}
                   style={{
-                    background: 'rgba(255,255,255,0.05)',
+                    background: 'var(--secondary-btn-bg)',
                     border: 'none',
                     color: 'var(--text-primary)',
                     borderRadius: '50%',
@@ -4586,7 +5067,7 @@ function App() {
               </div>
 
               {/* Personal Budget Settings Form */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Set Personal Monthly Budget
                 </h4>
@@ -4614,7 +5095,7 @@ function App() {
               </div>
 
               {/* Filter Period & Export Controls */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Filter Period & Export
                 </h4>
@@ -4652,14 +5133,14 @@ function App() {
                   <button 
                     onClick={handleDownloadPDF}
                     className="secondary-btn"
-                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: '8px', gap: '6px', border: '1px solid rgba(99, 102, 241, 0.2)', background: 'rgba(99, 102, 241, 0.05)' }}
+                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid var(--primary-border)', background: 'var(--primary-light)', color: 'var(--primary-color)' }}
                   >
                     📄 PDF Report
                   </button>
                   <button 
                     onClick={handleDownloadSheet}
                     className="secondary-btn"
-                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: '8px', gap: '6px', border: '1px solid rgba(16, 185, 129, 0.2)', background: 'rgba(16, 185, 129, 0.05)' }}
+                    style={{ justifyContent: 'center', padding: '10px', fontSize: '13px', borderRadius: 'var(--radius-sm)', gap: '6px', border: '1px solid rgba(16, 185, 129, 0.25)', background: 'rgba(16, 185, 129, 0.08)' }}
                   >
                     📊 Sheet (CSV)
                   </button>
@@ -4683,7 +5164,7 @@ function App() {
               </div>
 
               {/* Burn Projection Widget */}
-              <div style={{ background: 'rgba(99, 102, 241, 0.05)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(99, 102, 241, 0.15)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ background: 'var(--primary-light)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary-border)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-color)' }}>
                   Burn rate projection
                 </span>
@@ -4703,7 +5184,7 @@ function App() {
               </div>
 
               {/* Category Breakdown Section */}
-              <div style={{ background: 'rgba(255,255,255,0.01)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+              <div style={{ background: 'var(--surface-subtle)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                   Category Spend Breakdown
                 </h4>
@@ -4712,7 +5193,7 @@ function App() {
                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', display: 'block', padding: '10px 0' }}>No spending data for this period.</span>
                   ) : (
                     periodCategoryBreakdown.map(cat => (
-                      <div key={cat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
+                      <div key={cat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: cat.color }} />
                           <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
@@ -4747,9 +5228,9 @@ function App() {
                         <div style={{
                           width: '18px',
                           height: `${Math.max(pct, 4)}px`,
-                          background: day.amount > 0 ? 'linear-gradient(180deg, var(--primary-color) 0%, rgba(99, 102, 241, 0.4) 100%)' : 'rgba(255,255,255,0.05)',
-                          borderRadius: '4px',
-                          transition: 'height 0.3s ease'
+                          background: day.amount > 0 ? 'var(--primary-color)' : 'var(--chart-empty-bar)',
+                          borderRadius: '3px',
+                          transition: 'height 0.2s ease'
                         }} />
                         <span style={{ fontSize: '9px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                           {day.label}
@@ -4775,7 +5256,7 @@ function App() {
         );
       })()}
 
-      {/* Custom Glassmorphic Confirm Modal */}
+      {/* Custom Flat Confirm Modal */}
       {confirmModal && (
         <div style={{
           position: 'fixed',
@@ -4783,8 +5264,7 @@ function App() {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(8px)',
+          background: 'rgba(10, 15, 29, 0.75)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -4794,10 +5274,11 @@ function App() {
           <div className="glass-card animate-scale-in" style={{
             maxWidth: '400px',
             width: '100%',
-            padding: '24px',
-            borderRadius: '16px',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            padding: '20px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-lg)',
+            border: '1px solid var(--card-border)',
+            backgroundColor: 'var(--card-bg, #1e293b)',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
@@ -4805,8 +5286,8 @@ function App() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'center' }}>
               <div style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                color: '#f87171',
+                background: 'var(--danger-bg)',
+                color: 'var(--danger-color)',
                 padding: '12px',
                 borderRadius: '50%',
                 display: 'inline-flex'
@@ -4835,7 +5316,7 @@ function App() {
             <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
               <button
                 className="secondary-btn"
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px 16px', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
                 onClick={() => {
                   setConfirmPassword('');
                   setConfirmModal(null);
@@ -4845,7 +5326,7 @@ function App() {
               </button>
               <button
                 className="gradient-btn"
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', border: 'none', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px 16px', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: '600', background: 'var(--danger-color, #ef4444)', border: 'none', cursor: 'pointer' }}
                 onClick={() => {
                   if (confirmModal.requiresPassword && !confirmPassword) {
                     showAlert('Please enter your password to confirm.', 'error');
@@ -4870,8 +5351,7 @@ function App() {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(8px)',
+          background: 'rgba(10, 15, 29, 0.75)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -4881,13 +5361,14 @@ function App() {
           <div className="glass-card animate-scale-in" style={{
             maxWidth: '420px',
             width: '100%',
-            padding: '24px',
-            borderRadius: '16px',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            padding: '20px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-lg)',
+            border: '1px solid var(--card-border)',
+            backgroundColor: 'var(--card-bg, #1e293b)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '20px'
+            gap: '18px'
           }}>
             {/* Modal Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
@@ -4907,7 +5388,7 @@ function App() {
             </div>
 
             {/* User Profile Details */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'var(--surface-subtle)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
               {renderAvatar(passwordResetUser.profilePic, 48)}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: 1 }}>
                 <span style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-primary)', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>
@@ -4944,7 +5425,7 @@ function App() {
             <div style={{ display: 'flex', gap: '12px', borderTop: '1px solid var(--card-border)', paddingTop: '16px', marginTop: '4px' }}>
               <button
                 className="secondary-btn"
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px 16px', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
                 onClick={() => {
                   setPasswordResetUser(null);
                   setNewPasswordForUser('');
@@ -4954,7 +5435,7 @@ function App() {
               </button>
               <button
                 className="gradient-btn"
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px 16px', borderRadius: 'var(--radius-sm)', fontSize: '14px', fontWeight: '600', border: 'none', cursor: 'pointer' }}
                 onClick={() => handleSetUserPassword(passwordResetUser.id, passwordResetUser.username)}
                 disabled={passwordSubmitLoading}
               >
