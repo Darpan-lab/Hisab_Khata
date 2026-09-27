@@ -18,7 +18,7 @@ const cleanText = (str) => {
  * @param {string|null} groupId - The ID of the group, or 'personal' / null.
  * @returns {Promise<Buffer>} - A promise that resolves to the PDF buffer.
  */
-const generateCostAnalysisPDF = async (userId, groupId = null) => {
+const generateCostAnalysisPDF = async (userId, groupId = null, customMonth = null, customYear = null) => {
   // Fetch User
   const user = await User.findById(userId);
   if (!user) {
@@ -39,13 +39,19 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
     }
   }
 
-  // Time Window: Current Month
+  // Time Window: Target Month (defaults to Current Month)
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const hasCustomMonth = customMonth !== null && customMonth !== undefined && customMonth !== '';
+  const hasCustomYear = customYear !== null && customYear !== undefined && customYear !== '';
+  const targetMonth = hasCustomMonth ? Number(customMonth) : now.getMonth();
+  const targetYear = hasCustomYear ? Number(customYear) : now.getFullYear();
 
-  const monthName = now.toLocaleString('default', { month: 'long' });
-  const yearName = now.getFullYear();
+  const startOfMonth = new Date(targetYear, targetMonth, 1);
+  const endOfMonth = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59, 999);
+
+  const monthDate = new Date(targetYear, targetMonth, 1);
+  const monthName = monthDate.toLocaleString('default', { month: 'long' });
+  const yearName = targetYear;
 
   // Fetch relevant transactions in the current month
   let transactions;
@@ -152,7 +158,10 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
         }
       });
 
-      const budget = user.budget || 0;
+      const isCurrent = (targetMonth === now.getMonth()) && (targetYear === now.getFullYear());
+      const budget = isCurrent 
+        ? (user.budget || 0) 
+        : (user.historicalBudgets?.find(hb => hb.month === targetMonth && hb.year === targetYear)?.amount ?? (user.budget || 0));
       const budgetStatus = budget > 0 
         ? (personalTotal > budget ? 'Over Budget' : 'Within Budget') 
         : 'No Budget Set';
@@ -243,8 +252,13 @@ const generateCostAnalysisPDF = async (userId, groupId = null) => {
       });
 
       // Show Group statistics in key-value list format or small grid
+      const isCurrentGroupPeriod = (targetMonth === now.getMonth()) && (targetYear === now.getFullYear());
+      const groupBudget = isCurrentGroupPeriod 
+        ? (targetGroup.budget || 0) 
+        : (targetGroup.historicalBudgets?.find(hb => hb.month === targetMonth && hb.year === targetYear)?.amount ?? (targetGroup.budget || 0));
+
       doc.fillColor(secondaryColor).font('Helvetica-Bold').fontSize(9).text('Group Budget:', 50, y);
-      doc.font('Helvetica').fontSize(9).text(`${(targetGroup.budget || 0).toLocaleString()} Tk`, 150, y);
+      doc.font('Helvetica').fontSize(9).text(`${groupBudget.toLocaleString()} Tk`, 150, y);
       
       doc.font('Helvetica-Bold').fontSize(9).text('Total Group Spent:', 280, y);
       doc.font('Helvetica').fontSize(9).text(`${groupTotal.toLocaleString()} Tk`, 380, y);

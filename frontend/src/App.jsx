@@ -1547,7 +1547,7 @@ function App() {
       }
     });
 
-    // 2. Consolidated single entry for each linked shared group
+    // 2. Consolidated entry for each linked shared group per month
     if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.length > 0) {
       linkedPersonalGroups.forEach(gid => {
         const matchedGroup = groups.find(g => g._id === gid);
@@ -1566,32 +1566,52 @@ function App() {
         });
 
         if (myGroupTxs.length > 0) {
-          // Sort to find the latest transaction date/created time
-          const sortedGroupTxs = [...myGroupTxs].sort((a, b) => {
-            const dateA = parseLocalDate(a.date);
-            const dateB = parseLocalDate(b.date);
-            if (dateB - dateA !== 0) return dateB - dateA;
-            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          // Group transactions by month and year (e.g. "2026-8", "2026-9")
+          const monthBuckets = {};
+          myGroupTxs.forEach(t => {
+            const tDate = parseLocalDate(t.date);
+            const m = tDate.getMonth();
+            const y = tDate.getFullYear();
+            const key = `${y}-${m}`;
+            if (!monthBuckets[key]) {
+              monthBuckets[key] = { month: m, year: y, txs: [] };
+            }
+            monthBuckets[key].txs.push(t);
           });
 
-          const latestTx = sortedGroupTxs[0];
-          const totalSpentInGroup = myGroupTxs.reduce((sum, t) => sum + (t.cost * t.quantity), 0);
+          // Create a consolidated entry for each month
+          Object.values(monthBuckets).forEach(bucket => {
+            const sortedGroupTxs = [...bucket.txs].sort((a, b) => {
+              const dateA = parseLocalDate(a.date);
+              const dateB = parseLocalDate(b.date);
+              if (dateB - dateA !== 0) return dateB - dateA;
+              return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+            });
 
-          personalList.push({
-            _id: `group-summary-${gid}`,
-            itemName: groupName, // cost name will be the group name as a common consolidated entry
-            cost: totalSpentInGroup, // total costing of what user spent in that group
-            quantity: 1,
-            category: 'Shared Cost',
-            date: latestTx?.date || getLocalDateString(),
-            createdAt: latestTx?.createdAt || new Date().toISOString(),
-            isGroupTotalSummary: true,
-            isSharedGroupCost: true,
-            sharedGroupId: gid,
-            sharedGroupName: groupName,
-            itemCount: myGroupTxs.length,
-            group: matchedGroup || { _id: gid, name: groupName },
-            user: user
+            const latestTx = sortedGroupTxs[0];
+            const totalSpentInMonth = bucket.txs.reduce((sum, t) => sum + (t.cost * t.quantity), 0);
+            const fullMonthName = new Date(bucket.year, bucket.month, 1).toLocaleString('en-US', { month: 'long' });
+            const monthLabel = bucket.year !== new Date().getFullYear() ? `${fullMonthName} ${bucket.year}` : fullMonthName;
+
+            personalList.push({
+              _id: `group-summary-${gid}-${bucket.year}-${bucket.month}`,
+              itemName: groupName, // cost name will be the group name as a common consolidated entry
+              cost: totalSpentInMonth, // total costing of what user spent in that group during THIS month
+              quantity: 1,
+              category: 'Shared Cost',
+              date: latestTx?.date || getLocalDateString(),
+              createdAt: latestTx?.createdAt || new Date().toISOString(),
+              isGroupTotalSummary: true,
+              isSharedGroupCost: true,
+              sharedGroupId: gid,
+              sharedGroupName: groupName,
+              month: bucket.month,
+              year: bucket.year,
+              monthName: monthLabel,
+              itemCount: bucket.txs.length,
+              group: matchedGroup || { _id: gid, name: groupName },
+              user: user
+            });
           });
         }
       });
@@ -1627,12 +1647,12 @@ function App() {
     
     list.sort((a, b) => {
       if (historySortBy === 'date_desc') {
-        const diff = new Date(b.date) - new Date(a.date);
+        const diff = parseLocalDate(b.date) - parseLocalDate(a.date);
         if (diff !== 0) return diff;
         return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
       }
       if (historySortBy === 'date_asc') {
-        const diff = new Date(a.date) - new Date(b.date);
+        const diff = parseLocalDate(a.date) - parseLocalDate(b.date);
         if (diff !== 0) return diff;
         return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
       }
@@ -1663,6 +1683,38 @@ function App() {
   const historyTotal = useMemo(() => {
     return historyTransactions.reduce((acc, t) => acc + (t.cost * t.quantity), 0);
   }, [historyTransactions]);
+
+  const isHistoryFiltered = useMemo(() => {
+    return historyCategoryFilter !== 'all' || Boolean(historyStartDate) || Boolean(historyEndDate);
+  }, [historyCategoryFilter, historyStartDate, historyEndDate]);
+
+  const historySpentLabel = useMemo(() => {
+    const hasCategory = historyCategoryFilter !== 'all';
+    const hasDate = Boolean(historyStartDate || historyEndDate);
+
+    if (!hasCategory && !hasDate) {
+      return 'All time spent';
+    }
+
+    if (hasCategory && !hasDate) {
+      return `Total spent on ${historyCategoryFilter}`;
+    }
+
+    let dateText = '';
+    if (historyStartDate && historyEndDate) {
+      dateText = `${historyStartDate} to ${historyEndDate}`;
+    } else if (historyStartDate) {
+      dateText = `from ${historyStartDate}`;
+    } else if (historyEndDate) {
+      dateText = `until ${historyEndDate}`;
+    }
+
+    if (hasCategory && hasDate) {
+      return `Filtered spent on ${historyCategoryFilter} (${dateText})`;
+    }
+
+    return `Filtered spent (${dateText})`;
+  }, [historyCategoryFilter, historyStartDate, historyEndDate]);
 
   const selectedHistoryTotal = useMemo(() => {
     if (selectedHistoryIds.length === 0) return 0;
@@ -1791,19 +1843,20 @@ function App() {
     const categoryTotals = {};
     periodTx.forEach(t => {
       const amt = t.cost * t.quantity;
-      categoryTotals[t.category] = (categoryTotals[t.category] || 0) + amt;
+      const catName = (filterGroup === 'personal' && t.group) ? 'Shared Cost' : t.category;
+      categoryTotals[catName] = (categoryTotals[catName] || 0) + amt;
     });
 
     const breakdown = Object.entries(categoryTotals).map(([name, amount]) => {
       const percentage = totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0;
       const catObj = categories.find(c => c.name === name);
-      const color = catObj ? catObj.color : '#6b7280';
+      const color = name === 'Shared Cost' ? 'var(--primary-color)' : (catObj ? catObj.color : '#6b7280');
       return { name, amount, percentage, color };
     });
 
     breakdown.sort((a, b) => b.amount - a.amount);
     return { breakdown, totalSpent };
-  }, [metricTransactions, historySelectedMonth, historySelectedYear, categories]);
+  }, [metricTransactions, historySelectedMonth, historySelectedYear, categories, filterGroup]);
 
   // Categories computed based on the selected group filter (for Add Expense Form)
   const formCategories = useMemo(() => {
@@ -1952,9 +2005,13 @@ function App() {
 
   const handleDownloadPersonalCSV = () => {
     const myId = user?.id || user?._id;
-    const purePersonalTransactions = transactions.filter(t => !t.group);
+    const purePersonalTransactions = transactions.filter(t => {
+      if (t.group) return false;
+      const tDate = parseLocalDate(t.date);
+      return tDate.getMonth() === historySelectedMonth && tDate.getFullYear() === historySelectedYear;
+    });
 
-    // Consolidate each linked shared group: NO individual shared entries, just group name and total cost!
+    // Consolidate each linked shared group for the selected period
     const consolidatedGroupItems = [];
     if (Array.isArray(linkedPersonalGroups) && linkedPersonalGroups.length > 0) {
       linkedPersonalGroups.forEach(gid => {
@@ -1964,6 +2021,8 @@ function App() {
         const myGroupTxs = transactions.filter(t => {
           const tGid = t.group?._id || t.group || t.groupId;
           if (tGid !== gid) return false;
+          const tDate = parseLocalDate(t.date);
+          if (tDate.getMonth() !== historySelectedMonth || tDate.getFullYear() !== historySelectedYear) return false;
 
           return myId && (
             (t.user?._id && (t.user._id === myId || t.user._id === user?.id || t.user._id === user?._id)) ||
@@ -2013,11 +2072,17 @@ function App() {
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
 
+    const now = new Date();
+    const isCurrentPeriod = (historySelectedMonth === now.getMonth()) && (historySelectedYear === now.getFullYear());
+    const monthlyBudget = isCurrentPeriod 
+      ? (user?.budget || 0) 
+      : (user?.historicalBudgets?.find(hb => hb.month === historySelectedMonth && hb.year === historySelectedYear)?.amount ?? (user?.budget || 0));
+
     let csvContent = "";
     csvContent += `Personal Expense Report - ${user?.username || 'User'}\n`;
     csvContent += `Generated On,${new Date().toLocaleDateString()}\n`;
     csvContent += `Period,${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][historySelectedMonth]} ${historySelectedYear}\n`;
-    csvContent += `Monthly Budget,${user?.budget || 0}\n\n`;
+    csvContent += `Monthly Budget,${monthlyBudget}\n\n`;
     csvContent += "COST ITEMS LIST\n";
     csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price\n";
     reportItems.forEach(t => {
@@ -2037,7 +2102,7 @@ function App() {
 
   const handleDownloadPersonalPDF = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=personal`, {
+      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=personal&month=${historySelectedMonth}&year=${historySelectedYear}`, {
         ...getHeaders(),
         responseType: 'blob'
       });
@@ -2056,12 +2121,24 @@ function App() {
 
   const handleDownloadGroupCSV = (targetGroup) => {
     if (!targetGroup) return;
-    const groupTransactions = transactions.filter(t => t.group && (t.group._id === targetGroup._id || t.group === targetGroup._id));
+    const groupTransactions = transactions.filter(t => {
+      const isGrp = t.group && (t.group._id === targetGroup._id || t.group === targetGroup._id);
+      if (!isGrp) return false;
+      const tDate = parseLocalDate(t.date);
+      return tDate.getMonth() === historySelectedMonth && tDate.getFullYear() === historySelectedYear;
+    });
+
+    const now = new Date();
+    const isCurrentPeriod = (historySelectedMonth === now.getMonth()) && (historySelectedYear === now.getFullYear());
+    const groupBudget = isCurrentPeriod 
+      ? (targetGroup.budget || 0)
+      : (targetGroup.historicalBudgets?.find(hb => hb.month === historySelectedMonth && hb.year === historySelectedYear)?.amount ?? (targetGroup.budget || 0));
+
     let csvContent = "";
     csvContent += `Group Budget Report - ${targetGroup.name}\n`;
     csvContent += `Generated On,${new Date().toLocaleDateString()}\n`;
     csvContent += `Period,${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][historySelectedMonth]} ${historySelectedYear}\n`;
-    csvContent += `Group Budget,${targetGroup.budget || 0}\n\n`;
+    csvContent += `Group Budget,${groupBudget}\n\n`;
     csvContent += "COST ITEMS LIST\n";
     csvContent += "Date,Item Name,Category,Cost,Quantity,Total Price,Added By\n";
     groupTransactions.forEach(t => {
@@ -2083,7 +2160,7 @@ function App() {
   const handleDownloadGroupPDF = async (targetGroup) => {
     if (!targetGroup) return;
     try {
-      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=${targetGroup._id}`, {
+      const response = await axios.get(`${API_BASE}/transactions/report/pdf?groupId=${targetGroup._id}&month=${historySelectedMonth}&year=${historySelectedYear}`, {
         ...getHeaders(),
         responseType: 'blob'
       });
@@ -2787,7 +2864,7 @@ function App() {
                           <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px' }}>
                             {t.isGroupTotalSummary ? (
                               <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                Shared Group Total ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'})
+                                Shared Group ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}) • {t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}
                               </span>
                             ) : (
                               <>
@@ -2811,9 +2888,11 @@ function App() {
                                 )}
                               </>
                             )}
-                            <span style={{ color: 'var(--text-muted)' }}>
-                              {parseLocalDate(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                            </span>
+                            {!t.isGroupTotalSummary && (
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {parseLocalDate(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              </span>
+                            )}
                             {!t.isGroupTotalSummary && t.group && t.user && (
                               <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
@@ -2961,12 +3040,7 @@ function App() {
             <div className="glass-card">
               <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '4px' }}>History Logs</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px' }}>
-                Manage all recorded spends. Total items filtered: {historyTransactions.length}.
-                {selectedHistoryIds.length === 0 && (
-                  <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    💡 Tip: Press and hold any entry to calculate total spent of selected entries.
-                  </span>
-                )}
+                Manage all recorded spends. {isHistoryFiltered ? `Total items filtered: ${historyTransactions.length}.` : `Total items: ${historyTransactions.length}.`}
               </p>
 
               {/* Category Filter and Sorting Controls */}
@@ -3079,7 +3153,7 @@ function App() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px 16px', borderRadius: 'var(--radius-md)', background: 'var(--surface-subtle)', border: '1px solid var(--card-border)', marginBottom: '16px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {historyCategoryFilter === 'all' ? 'Total spent' : `Total spent on ${historyCategoryFilter}`}
+                  {historySpentLabel}
                 </span>
                 <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--primary-color)' }}>৳{historyTotal.toLocaleString()}</span>
               </div>
@@ -3164,7 +3238,7 @@ function App() {
                           <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px', margin: '4px 0' }}>
                             {t.isGroupTotalSummary ? (
                               <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                Shared Group Total ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'})
+                                Shared Group ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}) • {t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}
                               </span>
                             ) : (
                               <>
@@ -3188,9 +3262,11 @@ function App() {
                                 )}
                               </>
                             )}
-                            <span style={{ color: 'var(--text-muted)' }}>
-                              {parseLocalDate(t.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-                            </span>
+                            {!t.isGroupTotalSummary && (
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {parseLocalDate(t.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                              </span>
+                            )}
                             {!t.isGroupTotalSummary && t.group && t.user && (
                               <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
@@ -3215,20 +3291,22 @@ function App() {
                               }}
                               onMouseDown={(e) => e.stopPropagation()}
                               onTouchStart={(e) => e.stopPropagation()}
-                              className="secondary-btn"
                               style={{
-                                padding: '6px 12px',
-                                fontSize: '12px',
-                                fontWeight: '600',
+                                background: 'var(--primary-light)',
+                                border: '1px solid var(--primary-border)',
+                                color: 'var(--primary-color)',
+                                cursor: 'pointer',
+                                padding: '6px',
+                                borderRadius: '8px',
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
-                                borderRadius: 'var(--radius-sm)',
-                                cursor: 'pointer'
+                                justifyContent: 'center',
+                                transition: 'all 0.2s'
                               }}
                               title={`View ${t.sharedGroupName} details`}
+                              aria-label={`View ${t.sharedGroupName} details`}
                             >
-                              <Eye size={13} /> View Group
+                              <Eye size={18} />
                             </button>
                           ) : (
                             (t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
@@ -3575,9 +3653,14 @@ function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
                 {/* Join Group */}
                 <div className="glass-card" style={{ marginBottom: 0, padding: '16px' }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <UserPlus size={16} style={{ color: 'var(--primary-color)' }} /> Join Group
-                  </h3>
+                  <div style={{ marginBottom: '12px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <UserPlus size={16} style={{ color: 'var(--primary-color)' }} /> Join Group
+                    </h3>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.4' }}>
+                      Enter an invite code from the group owner to join.
+                    </p>
+                  </div>
                   <form onSubmit={handleJoinGroupSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <input
                       type="text"
@@ -3596,9 +3679,14 @@ function App() {
 
                 {/* Create Group */}
                 <div className="glass-card" style={{ marginBottom: 0, padding: '16px' }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: '700', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <PlusCircle size={16} style={{ color: 'var(--primary-color)' }} /> Create Group
-                  </h3>
+                  <div style={{ marginBottom: '12px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <PlusCircle size={16} style={{ color: 'var(--primary-color)' }} /> Create Group
+                    </h3>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.4' }}>
+                      Start a new group to track and share expenses with others.
+                    </p>
+                  </div>
                   <form onSubmit={handleCreateGroupSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <input
                       type="text"
@@ -3872,7 +3960,7 @@ function App() {
                               </button>
 
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                                If configured, group costs will sync here. Otherwise, they sync to members' personal sheets.
+                                If configured, group costs will sync here. Otherwise, group costs will not sync to Google Sheets.
                               </span>
                             </form>
                           ) : (
@@ -3883,7 +3971,7 @@ function App() {
                                   <span>Syncing group expenses to custom Google Sheet.</span>
                                 </>
                               ) : (
-                                <span>No group sheet configured. Expenses sync to members' personal sheets.</span>
+                                <span>No group sheet configured. Group expenses will not sync to Google Sheets.</span>
                               )}
                             </div>
                           )}
@@ -5294,8 +5382,18 @@ function App() {
           });
         }
 
-        // Determine target budget
-        const selectedPeriodBudget = user.budget || 0;
+        // Determine target budget for selected month & year
+        const now = new Date();
+        const isCurrentPeriod = (analyticsSelectedMonth === now.getMonth()) && (analyticsSelectedYear === now.getFullYear());
+        const selectedPeriodBudget = (() => {
+          if (isCurrentPeriod) {
+            return user?.budget || 0;
+          }
+          const hist = user?.historicalBudgets?.find(
+            hb => hb.month === analyticsSelectedMonth && hb.year === analyticsSelectedYear
+          );
+          return hist ? hist.amount : (user?.budget || 0);
+        })();
 
         const filteredTotalSpent = purePersonalTransactions.reduce((acc, t) => acc + (t.cost * t.quantity), 0) +
           consolidatedGroupEntries.reduce((acc, g) => acc + g.cost, 0);

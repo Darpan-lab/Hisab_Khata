@@ -15,10 +15,10 @@ const { notifyGroupMembers } = require('../services/notificationService');
 // @desc    Download PDF report of cost analysis (personal or group)
 // @access  Private
 router.get('/report/pdf', protect, async (req, res) => {
-  const { groupId } = req.query;
+  const { groupId, month, year } = req.query;
 
   try {
-    const pdfBuffer = await generateCostAnalysisPDF(req.user.id, groupId);
+    const pdfBuffer = await generateCostAnalysisPDF(req.user.id, groupId, month, year);
 
     let filename = 'Personal_Report.pdf';
     if (groupId && groupId !== 'personal') {

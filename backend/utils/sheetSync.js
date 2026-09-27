@@ -31,10 +31,29 @@ const formatToBangladeshTime = (dateInput) => {
 // Helper function to sync with Google Sheet
 const syncWithGoogleSheet = async (user, transaction, action, group = null) => {
   let sheetUrl = '';
-  if (group && group.sheetUrl) {
-    sheetUrl = group.sheetUrl;
+  const isGroupTransaction = Boolean(group || (transaction && transaction.group));
+
+  if (isGroupTransaction) {
+    if (group && group.sheetUrl && group.sheetUrl.trim()) {
+      sheetUrl = group.sheetUrl.trim();
+    } else if (!group && transaction && transaction.group) {
+      // In case group doc was not provided, fetch it
+      const Group = require('../models/Group');
+      const fetchedGroup = await Group.findById(transaction.group);
+      if (fetchedGroup && fetchedGroup.sheetUrl && fetchedGroup.sheetUrl.trim()) {
+        sheetUrl = fetchedGroup.sheetUrl.trim();
+        group = fetchedGroup;
+      } else {
+        console.log(`[GoogleSheetSync] Group cost skipped: group has no sheet configured. Will not sync to member personal sheet.`);
+        return { success: false, reason: 'Group sheet not configured' };
+      }
+    } else {
+      console.log(`[GoogleSheetSync] Group cost skipped: group has no sheet configured. Will not sync to member personal sheet.`);
+      return { success: false, reason: 'Group sheet not configured' };
+    }
   } else {
-    sheetUrl = user.sheetUrl || process.env.GLOBAL_GOOGLE_SCRIPT_URL;
+    // Only personal transactions sync to the user's personal sheet
+    sheetUrl = user?.sheetUrl || process.env.GLOBAL_GOOGLE_SCRIPT_URL;
   }
 
   if (!sheetUrl) {
