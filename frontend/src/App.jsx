@@ -24,6 +24,8 @@ import {
   Tag,
   Layers,
   ChevronRight,
+  ChevronLeft,
+  ChevronDown,
   User,
   Mail,
   Lock,
@@ -47,8 +49,9 @@ import {
 } from 'lucide-react';
 
 const API_BASE = '/api';
-const APP_VERSION = '1.0.0 (v8)';
+const APP_VERSION = '1.0.0 (v9)';
 const presetAvatars = ['👤', '👨‍💻', '👩‍💻', '🦁', '🦊', '🐼', '🐱', '🕶️', '👑', '⭐', '🍀', '🔥'];
+let cachedVapidPublicKey = null;
 
 function App() {
   // Authentication & Navigation State
@@ -234,6 +237,323 @@ function App() {
     setFilterGroup(value);
     localStorage.setItem('filterGroup', value);
   };
+
+  // Custom Scope Selection Modal & Swipe States
+  const [showScopeModal, setShowScopeModal] = useState(false);
+
+  const availableScopes = useMemo(() => [
+    {
+      id: 'personal',
+      name: 'Personal Only',
+      type: 'personal',
+      subtitle: 'Private personal expenses & budget'
+    },
+    ...groups.map(g => ({
+      id: g._id,
+      name: g.name,
+      type: 'group',
+      subtitle: `${g.members?.length || 1} members • ${g.owner?._id === user?.id || g.owner === user?.id ? 'Owner' : 'Member'}`,
+      group: g
+    }))
+  ], [groups, user]);
+
+  const currentScopeObj = useMemo(() => {
+    return availableScopes.find(s => s.id === filterGroup) || availableScopes[0];
+  }, [availableScopes, filterGroup]);
+
+  // Scope Swipe & Fluid Animation States
+  const [scopeDragOffset, setScopeDragOffset] = useState(0);
+  const [isScopeDragging, setIsScopeDragging] = useState(false);
+  const [scopeAnimDirection, setScopeAnimDirection] = useState(null); // 'left' | 'right' | null
+  const [scopeAnimKey, setScopeAnimKey] = useState(0);
+  const hasVibratedThresholdRef = useRef(false);
+
+  const triggerAnimatedScopeSwitch = (direction) => {
+    if (availableScopes.length <= 1) return;
+
+    // Distinct dual-pulse tactile haptic vibration for scope switch
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        navigator.vibrate([40, 25, 40]);
+      } catch {
+        try { navigator.vibrate(40); } catch {}
+      }
+    }
+
+    // Set animation direction:
+    // If switching 'next' (swiped left), the incoming badge slides in from right ('right')
+    // If switching 'prev' (swiped right), the incoming badge slides in from left ('left')
+    setScopeAnimDirection(direction === 'next' ? 'right' : 'left');
+    setScopeAnimKey(prev => prev + 1);
+
+    const currentIndex = availableScopes.findIndex(s => s.id === filterGroup);
+    let nextIndex = 0;
+    if (direction === 'next') {
+      nextIndex = (currentIndex + 1) % availableScopes.length;
+    } else {
+      nextIndex = (currentIndex - 1 + availableScopes.length) % availableScopes.length;
+    }
+    const nextScope = availableScopes[nextIndex];
+    if (nextScope) {
+      handleFilterGroupChange(nextScope.id);
+    }
+  };
+
+  const cycleScope = (direction) => {
+    triggerAnimatedScopeSwitch(direction);
+  };
+
+  const scopeTouchRef = useRef({ startX: 0, startY: 0, startTime: 0, isSwiping: false, isScrolling: false });
+  const didScopeSwipeRef = useRef(false);
+
+  const onScopeTouchStart = (e) => {
+    const t = e.touches[0];
+    scopeTouchRef.current = {
+      startX: t.clientX,
+      startY: t.clientY,
+      startTime: Date.now(),
+      isSwiping: false,
+      isScrolling: false
+    };
+    didScopeSwipeRef.current = false;
+    hasVibratedThresholdRef.current = false;
+  };
+
+  const onScopeTouchMove = (e) => {
+    const t = e.touches[0];
+    const dx = t.clientX - scopeTouchRef.current.startX;
+    const dy = t.clientY - scopeTouchRef.current.startY;
+
+    // Distinguish vertical scrolling from horizontal swiping
+    if (!scopeTouchRef.current.isSwiping && !scopeTouchRef.current.isScrolling) {
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+        scopeTouchRef.current.isScrolling = true;
+        return;
+      }
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        scopeTouchRef.current.isSwiping = true;
+      }
+    }
+
+    if (scopeTouchRef.current.isScrolling) return;
+
+    if (scopeTouchRef.current.isSwiping) {
+      didScopeSwipeRef.current = true;
+      setIsScopeDragging(true);
+      // Dampened touch-follow offset for smooth physical tracking
+      const damped = dx > 0 ? Math.min(dx * 0.65, 45) : Math.max(dx * 0.65, -45);
+      setScopeDragOffset(damped);
+
+      // Light tactile tick feedback when passing switch threshold
+      if (!hasVibratedThresholdRef.current && Math.abs(dx) >= 28) {
+        hasVibratedThresholdRef.current = true;
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(20); } catch {}
+        }
+      } else if (hasVibratedThresholdRef.current && Math.abs(dx) < 20) {
+        hasVibratedThresholdRef.current = false;
+      }
+    }
+  };
+
+  const onScopeTouchEnd = (e) => {
+    const t = e.changedTouches ? e.changedTouches[0] : null;
+    setIsScopeDragging(false);
+    setScopeDragOffset(0);
+    hasVibratedThresholdRef.current = false;
+
+    if (!t || scopeTouchRef.current.isScrolling) {
+      scopeTouchRef.current.isSwiping = false;
+      scopeTouchRef.current.isScrolling = false;
+      return;
+    }
+
+    const dx = t.clientX - scopeTouchRef.current.startX;
+    const dy = t.clientY - scopeTouchRef.current.startY;
+    const dt = Date.now() - scopeTouchRef.current.startTime;
+
+    const isQuickFlick = dt < 350 && Math.abs(dx) > 22 && Math.abs(dx) > Math.abs(dy);
+    const isDragSwipe = Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy);
+
+    if (isQuickFlick || isDragSwipe) {
+      didScopeSwipeRef.current = true;
+      const direction = dx > 0 ? 'prev' : 'next';
+      triggerAnimatedScopeSwitch(direction);
+    } else if (didScopeSwipeRef.current) {
+      // Swiped slightly but canceled; prevent opening modal accidentally
+      setTimeout(() => {
+        didScopeSwipeRef.current = false;
+      }, 150);
+    }
+
+    scopeTouchRef.current.isSwiping = false;
+    scopeTouchRef.current.isScrolling = false;
+  };
+
+  const handleScopeBoxClick = () => {
+    if (didScopeSwipeRef.current) {
+      didScopeSwipeRef.current = false;
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(25); } catch {}
+    }
+    setShowScopeModal(true);
+  };
+
+  const renderScopeSelector = () => (
+    <div
+      onTouchStart={onScopeTouchStart}
+      onTouchMove={onScopeTouchMove}
+      onTouchEnd={onScopeTouchEnd}
+      onClick={handleScopeBoxClick}
+      style={{
+        marginBottom: '16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '10px',
+        background: isScopeDragging 
+          ? (theme === 'light' ? '#f0f7ff' : 'rgba(37, 99, 235, 0.08)')
+          : 'var(--surface-subtle)',
+        padding: '8px 12px',
+        borderRadius: 'var(--radius-md)',
+        border: isScopeDragging ? '1.5px solid var(--primary-color)' : '1.5px solid var(--card-border)',
+        cursor: isScopeDragging ? 'grabbing' : 'pointer',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        touchAction: 'pan-y',
+        position: 'relative',
+        overflow: 'hidden',
+        transition: isScopeDragging ? 'none' : 'border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease',
+        boxShadow: isScopeDragging ? '0 4px 12px rgba(37, 99, 235, 0.15)' : 'var(--shadow-sm)'
+      }}
+      title="Tap to open scope window, or swipe left/right to switch"
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)', flexShrink: 0 }}>
+          Scope:
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <div
+            key={`${filterGroup}-${scopeAnimKey}`}
+            className={
+              !isScopeDragging && scopeAnimDirection === 'right'
+                ? 'scope-pill-anim-right'
+                : !isScopeDragging && scopeAnimDirection === 'left'
+                  ? 'scope-pill-anim-left'
+                  : ''
+            }
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              background: filterGroup === 'personal' ? 'var(--card-bg)' : 'var(--primary-light)',
+              border: filterGroup === 'personal' ? '1px solid var(--card-border)' : '1px solid var(--primary-border)',
+              color: filterGroup === 'personal' ? 'var(--text-primary)' : 'var(--primary-color)',
+              padding: '5px 12px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: '700',
+              maxWidth: '180px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              transform: isScopeDragging ? `translateX(${scopeDragOffset}px)` : undefined,
+              transition: isScopeDragging ? 'none' : 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease',
+              boxShadow: isScopeDragging ? 'var(--shadow-md)' : undefined,
+              willChange: 'transform, opacity'
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentScopeObj.name}
+            </span>
+          </div>
+
+          {/* Scope Indicator Dots */}
+          {availableScopes.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+              {availableScopes.map((scope) => {
+                const isActive = scope.id === filterGroup;
+                const dotColor = isActive
+                  ? (theme === 'light' ? '#1d4ed8' : 'var(--primary-color)')
+                  : (theme === 'light' ? '#64748b' : 'rgba(255, 255, 255, 0.35)');
+                return (
+                  <span
+                    key={scope.id}
+                    style={{
+                      height: '5px',
+                      width: isActive ? '14px' : '5px',
+                      borderRadius: '3px',
+                      backgroundColor: dotColor,
+                      transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                      boxShadow: isActive 
+                        ? (theme === 'light' ? '0 1px 3px rgba(29, 78, 216, 0.35)' : '0 1px 4px rgba(37, 99, 235, 0.6)')
+                        : 'none'
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            cycleScope('prev');
+          }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: scopeDragOffset > 15 ? 'var(--primary-color)' : 'var(--text-muted)',
+            transform: scopeDragOffset > 15 ? 'scale(1.2)' : 'scale(1)',
+            cursor: 'pointer',
+            padding: '4px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s ease'
+          }}
+          title="Previous Scope"
+          aria-label="Previous Scope"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            cycleScope('next');
+          }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: scopeDragOffset < -15 ? 'var(--primary-color)' : 'var(--text-muted)',
+            transform: scopeDragOffset < -15 ? 'scale(1.2)' : 'scale(1)',
+            cursor: 'pointer',
+            padding: '4px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s ease'
+          }}
+          title="Next Scope"
+          aria-label="Next Scope"
+        >
+          <ChevronRight size={16} />
+        </button>
+        <div style={{ width: '1px', height: '14px', background: 'var(--card-border)', margin: '0 2px' }} />
+        <div style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: '2px' }}>
+          <ChevronDown size={15} />
+        </div>
+      </div>
+    </div>
+  );
   
   // Custom Confirm Modal State
   const [confirmModal, setConfirmModal] = useState(null); // { message, onConfirm, requiresPassword }
@@ -274,6 +594,7 @@ function App() {
   
   // History Selection & Long-Press States
   const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
+  const [pressingHistoryId, setPressingHistoryId] = useState(null);
   const longPressTimerRef = useRef(null);
   const touchStartPosRef = useRef({ x: 0, y: 0 });
   const isLongPressTriggeredRef = useRef(false);
@@ -465,13 +786,24 @@ function App() {
         setSheetUrlForm(user.sheetUrl || '');
       }
 
-      // Check active device push subscription
+      // Check active device push subscription and prefetch VAPID key
       const checkSubscription = async () => {
         if ('serviceWorker' in navigator) {
           try {
             const reg = await navigator.serviceWorker.ready;
             const sub = await reg.pushManager.getSubscription();
             setIsSubscribedToPush(!!sub);
+
+            // Prefetch VAPID public key in background so 'Enable' click is instant
+            if (!cachedVapidPublicKey) {
+              axios.get(`${API_BASE}/notifications/vapid-key`, getHeaders())
+                .then(res => {
+                  if (res.data?.success && res.data?.publicKey) {
+                    cachedVapidPublicKey = res.data.publicKey;
+                  }
+                })
+                .catch(() => {});
+            }
           } catch (e) {
             console.error('Error checking push subscription:', e);
           }
@@ -583,12 +915,18 @@ function App() {
           return;
         }
 
-        const keyRes = await axios.get(`${API_BASE}/notifications/vapid-key`, getHeaders());
-        if (!keyRes.data.success || !keyRes.data.publicKey) {
-          throw new Error('VAPID key not configured on server.');
+        // Get VAPID public key (from memory cache if available, or fetch once)
+        let publicKey = cachedVapidPublicKey;
+        if (!publicKey) {
+          const keyRes = await axios.get(`${API_BASE}/notifications/vapid-key`, getHeaders());
+          if (!keyRes.data?.success || !keyRes.data?.publicKey) {
+            throw new Error('VAPID key not configured on server.');
+          }
+          publicKey = keyRes.data.publicKey;
+          cachedVapidPublicKey = publicKey;
         }
 
-        const convertedKey = urlBase64ToUint8Array(keyRes.data.publicKey);
+        const convertedKey = urlBase64ToUint8Array(publicKey);
         const newSub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: convertedKey
@@ -797,6 +1135,9 @@ function App() {
   // Transaction Operations
   const handleTransactionSubmit = async (e) => {
     e.preventDefault();
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(40); } catch {}
+    }
     if (!transactionForm.itemName || !transactionForm.cost || !transactionForm.category || !transactionForm.date) {
       showAlert('Please fill in Item Name, Cost, Category, and Date', 'error');
       return;
@@ -1725,6 +2066,7 @@ function App() {
   }, [selectedHistoryIds, historyTransactions]);
 
   const cancelLongPress = () => {
+    setPressingHistoryId(null);
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
@@ -1734,12 +2076,14 @@ function App() {
   const handleHistoryPressStart = (id, e) => {
     cancelLongPress();
     isLongPressTriggeredRef.current = false;
+    setPressingHistoryId(id);
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     touchStartPosRef.current = { x: clientX, y: clientY };
 
     longPressTimerRef.current = setTimeout(() => {
       isLongPressTriggeredRef.current = true;
+      setPressingHistoryId(null);
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try { navigator.vibrate(40); } catch {}
       }
@@ -1773,6 +2117,9 @@ function App() {
       return;
     }
     if (selectedHistoryIds.length > 0) {
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(35); } catch {}
+      }
       setSelectedHistoryIds(prev => {
         if (prev.includes(id)) {
           return prev.filter(itemId => itemId !== id);
@@ -1783,15 +2130,11 @@ function App() {
     }
   };
 
-  const toggleSelectAllHistory = () => {
-    if (selectedHistoryIds.length === historyTransactions.length) {
-      setSelectedHistoryIds([]);
-    } else {
-      setSelectedHistoryIds(historyTransactions.map(t => t._id));
-    }
-  };
 
   const clearHistorySelection = () => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(25); } catch {}
+    }
     setSelectedHistoryIds([]);
   };
 
@@ -2650,24 +2993,7 @@ function App() {
           <div>
             
             {/* Filter Scope Selector if user has groups */}
-            {groups.length > 0 && (
-              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'var(--surface-subtle)', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
-                <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Users size={16} /> Scope:
-                </span>
-                <select
-                  className="form-input"
-                  style={{ padding: '6px 12px', fontSize: '14px', width: 'auto', minWidth: '160px', margin: 0 }}
-                  value={filterGroup}
-                  onChange={e => handleFilterGroupChange(e.target.value)}
-                >
-                  <option value="personal">Personal Only</option>
-                  {groups.map(g => (
-                    <option key={g._id} value={g._id}>Group: {g.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {groups.length > 0 && renderScopeSelector()}
 
             {/* Quick stats dashboard widget */}
             <div className="form-row" style={{ marginBottom: '16px' }}>
@@ -2786,7 +3112,17 @@ function App() {
                   </div>
                 </div>
 
-                <button type="submit" className="gradient-btn" style={{ width: '100%', marginTop: '8px' }} disabled={syncLoading}>
+                <button 
+                  type="submit" 
+                  className="gradient-btn" 
+                  style={{ width: '100%', marginTop: '8px' }} 
+                  disabled={syncLoading}
+                  onClick={() => {
+                    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                      try { navigator.vibrate(40); } catch {}
+                    }
+                  }}
+                >
                   {syncLoading ? (
                     <>
                       <Loader className="animate-spin" size={18} />
@@ -2922,24 +3258,7 @@ function App() {
         {activeTab === 'history' && (
           <div>
             {/* Filter Scope Selector if user has groups */}
-            {groups.length > 0 && (
-              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: 'var(--surface-subtle)', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--card-border)' }}>
-                <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Users size={16} /> Scope:
-                </span>
-                <select
-                  className="form-input"
-                  style={{ padding: '6px 12px', fontSize: '14px', width: 'auto', minWidth: '160px', margin: 0 }}
-                  value={filterGroup}
-                  onChange={e => handleFilterGroupChange(e.target.value)}
-                >
-                  <option value="personal">Personal Only</option>
-                  {groups.map(g => (
-                    <option key={g._id} value={g._id}>Group: {g.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {groups.length > 0 && renderScopeSelector()}
             {/* Remaining Balance Section (Current Month) */}
             <div className="glass-card" style={{ marginBottom: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3202,36 +3521,43 @@ function App() {
                             : undefined,
                           borderColor: isSelected ? 'var(--primary-color)' : undefined,
                           boxShadow: isSelected ? '0 0 0 1px var(--primary-color)' : undefined,
-                          transition: 'background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease'
+                          transform: pressingHistoryId === t._id ? 'scale(0.985)' : 'scale(1)',
+                          transition: 'background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease'
                         }}
                       >
-                        {isSelectionMode && (
-                          <div 
-                            style={{ 
-                              marginRight: '12px', 
-                              display: 'flex', 
-                              alignItems: 'center', 
+                        <div 
+                          style={{ 
+                            width: isSelectionMode ? '22px' : '0px',
+                            minWidth: isSelectionMode ? '22px' : '0px',
+                            marginRight: isSelectionMode ? '12px' : '0px',
+                            opacity: isSelectionMode ? 1 : 0,
+                            transform: isSelectionMode ? 'translateX(0) scale(1)' : 'translateX(-16px) scale(0.5)',
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            overflow: 'hidden',
+                            pointerEvents: isSelectionMode ? 'auto' : 'none',
+                            transition: 'width 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), min-width 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), margin-right 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.22s ease, transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: isSelected ? 'none' : '2px solid var(--card-border)',
+                              backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
                               justifyContent: 'center',
-                              flexShrink: 0
+                              transform: isSelected ? 'scale(1.05)' : 'scale(1)',
+                              transition: 'background-color 0.2s ease, border-color 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
                             }}
                           >
-                            <div
-                              style={{
-                                width: '20px',
-                                height: '20px',
-                                borderRadius: '50%',
-                                border: isSelected ? 'none' : '2px solid var(--card-border)',
-                                backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                transition: 'all 0.15s ease'
-                              }}
-                            >
-                              {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} />}
-                            </div>
+                            {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} className="animate-scale-in" />}
                           </div>
-                        )}
+                        </div>
 
                         <div className="transaction-info" style={{ flex: 1, paddingRight: '12px' }}>
                           <span className="transaction-name" style={{ fontSize: '16px' }}>{t.itemName}</span>
@@ -3592,43 +3918,27 @@ function App() {
                     </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={toggleSelectAllHistory}
-                    style={{
-                      background: 'var(--surface-subtle)',
-                      border: '1px solid var(--card-border)',
-                      color: 'var(--text-primary)',
-                      padding: '6px 10px',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {selectedHistoryIds.length === historyTransactions.length ? 'Deselect All' : 'Select All'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearHistorySelection}
-                    style={{
-                      background: 'var(--primary-color)',
-                      border: 'none',
-                      color: '#ffffff',
-                      padding: '6px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
-                  >
-                    <X size={14} /> Done
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={clearHistorySelection}
+                  style={{
+                    background: 'var(--surface-subtle)',
+                    border: '1px solid var(--card-border)',
+                    color: 'var(--text-secondary)',
+                    borderRadius: '50%',
+                    width: '32px',
+                    height: '32px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Clear selection"
+                  aria-label="Clear selection"
+                >
+                  <X size={16} />
+                </button>
               </div>
             )}
           </div>
@@ -4883,7 +5193,7 @@ function App() {
               <LogOut size={16} /> Log Out
             </button>
 
-            {/* App Version Info */}
+            {/* App Version Info & Clear Cache */}
             <div style={{
               textAlign: 'center',
               padding: '8px 0 28px 0',
@@ -4892,13 +5202,54 @@ function App() {
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '3px',
+              gap: '4px',
               userSelect: 'none'
             }}>
               <span style={{ fontWeight: '600', color: 'var(--text-secondary)', letterSpacing: '0.2px' }}>
                 Hisab Khata
               </span>
               <span>Version {APP_VERSION}</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    try { navigator.vibrate(35); } catch {}
+                  }
+                  if ('caches' in window) {
+                    try {
+                      const keys = await caches.keys();
+                      await Promise.all(keys.map(k => caches.delete(k)));
+                    } catch (e) {}
+                  }
+                  if ('serviceWorker' in navigator) {
+                    try {
+                      const regs = await navigator.serviceWorker.getRegistrations();
+                      for (const reg of regs) {
+                        await reg.unregister();
+                      }
+                    } catch (e) {}
+                  }
+                  window.location.reload();
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--primary-color)',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  padding: '4px 8px',
+                  marginTop: '4px',
+                  borderRadius: '6px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  opacity: 0.85
+                }}
+                title="Wipe old cached files and reload the latest version"
+              >
+                <RefreshCw size={12} /> Force Clear Cache & Reload
+              </button>
             </div>
           </>
         )}
@@ -5984,6 +6335,142 @@ function App() {
               >
                 {passwordSubmitLoading ? 'Saving...' : 'Save Password'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Scope Selection Modal */}
+      {showScopeModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(10, 15, 29, 0.75)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}
+          className="animate-fade-in"
+          onClick={() => setShowScopeModal(false)}
+        >
+          <div
+            className="glass-card animate-scale-in"
+            style={{
+              maxWidth: '440px',
+              width: '100%',
+              padding: '20px',
+              borderRadius: 'var(--radius-lg)',
+              marginBottom: 0,
+              boxShadow: 'var(--shadow-xl)',
+              border: '1.5px solid var(--card-border)',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: '800', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Users size={18} style={{ color: 'var(--primary-color)' }} /> Select Scope
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 0', lineHeight: 1.4 }}>
+                  Choose personal costing or switch to a shared group.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowScopeModal(false)}
+                style={{
+                  background: 'var(--surface-subtle)',
+                  border: '1px solid var(--card-border)',
+                  color: 'var(--text-secondary)',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Scope Options List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', paddingRight: '2px', maxHeight: '380px' }}>
+              {availableScopes.map((scope) => {
+                const isSelected = filterGroup === scope.id;
+                return (
+                  <div
+                    key={scope.id}
+                    onClick={() => {
+                      handleFilterGroupChange(scope.id);
+                      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                        try { navigator.vibrate(35); } catch {}
+                      }
+                      setShowScopeModal(false);
+                    }}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      background: isSelected 
+                        ? (theme === 'light' ? '#e0edff' : 'rgba(37, 99, 235, 0.16)')
+                        : 'var(--surface-subtle)',
+                      border: isSelected 
+                        ? '1.5px solid var(--primary-color)' 
+                        : '1px solid var(--card-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
+                      <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)' }}>
+                        {scope.name}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {scope.subtitle}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        border: isSelected ? 'none' : '2px solid var(--card-border)',
+                        background: isSelected ? 'var(--primary-color)' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0
+                      }}
+                    >
+                      {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Bottom Swipe Hint */}
+            <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--card-border)', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <span>⇄</span>
+              <span>Tip: You can also swipe left or right on the Scope bar to switch quickly!</span>
             </div>
           </div>
         </div>

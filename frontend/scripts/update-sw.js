@@ -13,7 +13,7 @@ if (fs.existsSync(swPath)) {
   // Replace the static cache name with a unique one per build
   swContent = swContent.replace(
     /const CACHE_NAME = 'hisab-khata-cache-[^']+';/,
-    `const CACHE_NAME = 'hisab-khata-cache-v8-${timestamp}';`
+    `const CACHE_NAME = 'hisab-khata-cache-v9-${timestamp}';`
   );
   fs.writeFileSync(swPath, swContent, 'utf8');
   console.log(`Successfully updated Service Worker cache name with timestamp: ${timestamp}`);

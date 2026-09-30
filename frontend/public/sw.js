@@ -1,9 +1,9 @@
-const CACHE_NAME = 'hisab-khata-cache-v8';
+const CACHE_NAME = 'hisab-khata-cache-v9';
 const STATIC_PRECACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/favicon.png?v=6',
+  '/favicon.png?v=7',
   '/logo.png',
   '/icon-192.png'
 ];
@@ -24,6 +24,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
+            console.log('[SW] Purging old cache:', cache);
             return caches.delete(cache);
           }
         })

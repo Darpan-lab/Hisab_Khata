@@ -181,6 +181,41 @@ body {
   animation: scaleIn var(--transition-normal);
 }
 
+/* Scope Carousel / Swipe Animations */
+@keyframes scopeSlideInRight {
+  0% {
+    transform: translateX(36px);
+    opacity: 0;
+    filter: blur(1.5px);
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes scopeSlideInLeft {
+  0% {
+    transform: translateX(-36px);
+    opacity: 0;
+    filter: blur(1.5px);
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.scope-pill-anim-right {
+  animation: scopeSlideInRight 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.scope-pill-anim-left {
+  animation: scopeSlideInLeft 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Flat Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 5px;
