@@ -49,7 +49,7 @@ import {
 } from 'lucide-react';
 
 const API_BASE = '/api';
-const APP_VERSION = '1.0.0 (v9)';
+const APP_VERSION = '9.0';
 const presetAvatars = ['👤', '👨‍💻', '👩‍💻', '🦁', '🦊', '🐼', '🐱', '🕶️', '👑', '⭐', '🍀', '🔥'];
 let cachedVapidPublicKey = null;
 
@@ -266,18 +266,15 @@ function App() {
   const [isScopeDragging, setIsScopeDragging] = useState(false);
   const [scopeAnimDirection, setScopeAnimDirection] = useState(null); // 'left' | 'right' | null
   const [scopeAnimKey, setScopeAnimKey] = useState(0);
-  const hasVibratedThresholdRef = useRef(false);
 
   const triggerAnimatedScopeSwitch = (direction) => {
     if (availableScopes.length <= 1) return;
 
-    // Distinct dual-pulse tactile haptic vibration for scope switch
+    // Single vibration pulse feedback for scope switch
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       try {
-        navigator.vibrate([40, 25, 40]);
-      } catch {
-        try { navigator.vibrate(40); } catch {}
-      }
+        navigator.vibrate(35);
+      } catch {}
     }
 
     // Set animation direction:
@@ -316,7 +313,6 @@ function App() {
       isScrolling: false
     };
     didScopeSwipeRef.current = false;
-    hasVibratedThresholdRef.current = false;
   };
 
   const onScopeTouchMove = (e) => {
@@ -343,16 +339,6 @@ function App() {
       // Dampened touch-follow offset for smooth physical tracking
       const damped = dx > 0 ? Math.min(dx * 0.65, 45) : Math.max(dx * 0.65, -45);
       setScopeDragOffset(damped);
-
-      // Light tactile tick feedback when passing switch threshold
-      if (!hasVibratedThresholdRef.current && Math.abs(dx) >= 28) {
-        hasVibratedThresholdRef.current = true;
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(20); } catch {}
-        }
-      } else if (hasVibratedThresholdRef.current && Math.abs(dx) < 20) {
-        hasVibratedThresholdRef.current = false;
-      }
     }
   };
 
@@ -360,7 +346,6 @@ function App() {
     const t = e.changedTouches ? e.changedTouches[0] : null;
     setIsScopeDragging(false);
     setScopeDragOffset(0);
-    hasVibratedThresholdRef.current = false;
 
     if (!t || scopeTouchRef.current.isScrolling) {
       scopeTouchRef.current.isSwiping = false;
