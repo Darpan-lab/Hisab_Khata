@@ -45,7 +45,8 @@ import {
   Sun,
   Moon,
   Check,
-  X
+  X,
+  Calendar
 } from 'lucide-react';
 
 const API_BASE = '/api';
@@ -304,6 +305,7 @@ function App() {
   const didScopeSwipeRef = useRef(false);
 
   const onScopeTouchStart = (e) => {
+    e.stopPropagation();
     const t = e.touches[0];
     scopeTouchRef.current = {
       startX: t.clientX,
@@ -316,6 +318,7 @@ function App() {
   };
 
   const onScopeTouchMove = (e) => {
+    e.stopPropagation();
     const t = e.touches[0];
     const dx = t.clientX - scopeTouchRef.current.startX;
     const dy = t.clientY - scopeTouchRef.current.startY;
@@ -343,6 +346,7 @@ function App() {
   };
 
   const onScopeTouchEnd = (e) => {
+    e.stopPropagation();
     const t = e.changedTouches ? e.changedTouches[0] : null;
     setIsScopeDragging(false);
     setScopeDragOffset(0);
@@ -386,8 +390,188 @@ function App() {
     setShowScopeModal(true);
   };
 
+  // Tab Slider Track & Touch Gesture States
+  const APP_TABS = useMemo(() => ['track', 'history', 'groups', 'settings'], []);
+  const trackRef = useRef(null);
+  const tabPanesRef = useRef([]);
+  const touchStateRef = useRef({
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    isSwiping: false,
+    isScrolling: false,
+    currentDx: 0
+  });
+  const didTabSwipeRef = useRef(false);
+
+  const switchTab = (targetTab, withVibration = true) => {
+    const targetIdx = APP_TABS.indexOf(targetTab);
+    if (targetIdx === -1) return;
+
+    if (withVibration && typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(25); } catch {}
+    }
+
+    if (targetTab === activeTab) {
+      // If tapping active tab in bottom nav, smoothly scroll pane to top
+      const pane = tabPanesRef.current[targetIdx];
+      if (pane) {
+        pane.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    setActiveTab(targetTab);
+    if (trackRef.current) {
+      trackRef.current.style.transition = 'transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1)';
+      trackRef.current.style.transform = `translateX(-${targetIdx * 25}%)`;
+    }
+  };
+
+  useEffect(() => {
+    const idx = APP_TABS.indexOf(activeTab);
+    if (idx !== -1 && trackRef.current) {
+      trackRef.current.style.transform = `translateX(-${idx * 25}%)`;
+    }
+  }, [activeTab, APP_TABS]);
+
+  const onSliderTouchStart = (e) => {
+    // If modal is open, or multi-select active, ignore
+    if (
+      selectedTransactionDetails ||
+      selectedGroupDetails ||
+      showPersonalAnalytics ||
+      showScopeModal ||
+      confirmModal ||
+      showNotificationsTray ||
+      passwordResetUser ||
+      showAdminPanel ||
+      selectedHistoryIds.length > 0
+    ) {
+      touchStateRef.current.isScrolling = true;
+      return;
+    }
+
+    // If user is actively typing in an input/textarea, don't hijack
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active === e.target) {
+      touchStateRef.current.isScrolling = true;
+      return;
+    }
+
+    const t = e.touches[0];
+    touchStateRef.current = {
+      startX: t.clientX,
+      startY: t.clientY,
+      startTime: Date.now(),
+      isSwiping: false,
+      isScrolling: false,
+      currentDx: 0
+    };
+    didTabSwipeRef.current = false;
+  };
+
+  const onSliderTouchMove = (e) => {
+    if (touchStateRef.current.isScrolling) return;
+
+    const t = e.touches[0];
+    const dx = t.clientX - touchStateRef.current.startX;
+    const dy = t.clientY - touchStateRef.current.startY;
+
+    if (!touchStateRef.current.isSwiping) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+
+      // Wait until at least 7px of movement to be sure
+      if (absX < 7 && absY < 7) return;
+
+      // If horizontal movement is greater than or equal to vertical, it's a swipe!
+      if (absX >= absY) {
+        touchStateRef.current.isSwiping = true;
+        if (trackRef.current) {
+          trackRef.current.style.transition = 'none';
+        }
+      } else {
+        // Vertical scroll
+        touchStateRef.current.isScrolling = true;
+        return;
+      }
+    }
+
+    if (touchStateRef.current.isSwiping) {
+      touchStateRef.current.currentDx = dx;
+
+      const currentIdx = APP_TABS.indexOf(activeTab);
+      let effectiveDx = dx;
+
+      // Rubber band resistance at boundaries
+      if ((currentIdx === 0 && dx > 0) || (currentIdx === APP_TABS.length - 1 && dx < 0)) {
+        effectiveDx = dx * 0.25;
+      }
+
+      if (trackRef.current) {
+        const basePercent = -(currentIdx * 25);
+        trackRef.current.style.transform = `translateX(calc(${basePercent}% + ${effectiveDx}px))`;
+      }
+    }
+  };
+
+  const onSliderTouchEnd = (e) => {
+    if (touchStateRef.current.isScrolling && !touchStateRef.current.isSwiping) {
+      touchStateRef.current.isScrolling = false;
+      return;
+    }
+
+    if (touchStateRef.current.isSwiping) {
+      const dx = touchStateRef.current.currentDx;
+      const dt = Math.max(Date.now() - touchStateRef.current.startTime, 1);
+      const velocity = Math.abs(dx) / dt;
+      const currentIdx = APP_TABS.indexOf(activeTab);
+
+      let targetIdx = currentIdx;
+
+      // Switching criteria:
+      // Dragged > 38px OR quick flick (velocity > 0.20 and moved > 14px)
+      if (Math.abs(dx) > 38 || (velocity > 0.20 && Math.abs(dx) > 14)) {
+        if (dx < 0 && currentIdx < APP_TABS.length - 1) {
+          // Swiped right-to-left: go to next tab
+          targetIdx = currentIdx + 1;
+        } else if (dx > 0 && currentIdx > 0) {
+          // Swiped left-to-right: go to prev tab
+          targetIdx = currentIdx - 1;
+        }
+      }
+
+      if (targetIdx !== currentIdx) {
+        didTabSwipeRef.current = true;
+        setTimeout(() => { didTabSwipeRef.current = false; }, 200);
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(20); } catch {}
+        }
+        switchTab(APP_TABS[targetIdx], false);
+      } else {
+        // Snap back to current tab with smooth easing
+        if (trackRef.current) {
+          trackRef.current.style.transition = 'transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1)';
+          trackRef.current.style.transform = `translateX(-${currentIdx * 25}%)`;
+        }
+      }
+
+      touchStateRef.current.isSwiping = false;
+      touchStateRef.current.isScrolling = false;
+    }
+  };
+
+  const handleMainClickCapture = (e) => {
+    if (didTabSwipeRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  };
+
   const renderScopeSelector = () => (
     <div
+      data-no-swipe="true"
       onTouchStart={onScopeTouchStart}
       onTouchMove={onScopeTouchMove}
       onTouchEnd={onScopeTouchEnd}
@@ -432,9 +616,9 @@ function App() {
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              background: filterGroup === 'personal' ? 'var(--card-bg)' : 'var(--primary-light)',
-              border: filterGroup === 'personal' ? '1px solid var(--card-border)' : '1px solid var(--primary-border)',
-              color: filterGroup === 'personal' ? 'var(--text-primary)' : 'var(--primary-color)',
+              background: 'var(--card-bg)',
+              border: '1px solid var(--card-border)',
+              color: 'var(--text-primary)',
               padding: '5px 12px',
               borderRadius: '8px',
               fontSize: '13px',
@@ -583,10 +767,26 @@ function App() {
   const longPressTimerRef = useRef(null);
   const touchStartPosRef = useRef({ x: 0, y: 0 });
   const isLongPressTriggeredRef = useRef(false);
+  const longPressedItemIdRef = useRef(null);
+
+  const [selectedTransactionDetails, setSelectedTransactionDetails] = useState(null);
+
+  // Close transaction details on Escape key
+  useEffect(() => {
+    if (!selectedTransactionDetails) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setSelectedTransactionDetails(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedTransactionDetails]);
 
   // Clear selection if tab or filter changes
   useEffect(() => {
     setSelectedHistoryIds([]);
+    setSelectedTransactionDetails(null);
   }, [activeTab, historyCategoryFilter, historyStartDate, historyEndDate]);
 
   // Shared Group Personal Linking State
@@ -761,6 +961,37 @@ function App() {
       setShowAdminPanel(false);
     }
   }, [activeTab]);
+
+  // Auto-hide scrollbars: reveal scrollbar thumb only when actively scrolling
+  useEffect(() => {
+    const scrollTimers = new Map();
+    const handleScrollCapture = (e) => {
+      const target = e.target;
+      if (!target || target === document || target === window) return;
+      if (target.classList && !target.classList.contains('is-scrolling')) {
+        target.classList.add('is-scrolling');
+      }
+      if (scrollTimers.has(target)) {
+        clearTimeout(scrollTimers.get(target));
+      }
+      scrollTimers.set(
+        target,
+        setTimeout(() => {
+          if (target && target.classList) {
+            target.classList.remove('is-scrolling');
+          }
+          scrollTimers.delete(target);
+        }, 800)
+      );
+    };
+
+    window.addEventListener('scroll', handleScrollCapture, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScrollCapture, { capture: true });
+      scrollTimers.forEach(timer => clearTimeout(timer));
+      scrollTimers.clear();
+    };
+  }, []);
 
   // Load Initial Data when token changes
   useEffect(() => {
@@ -1113,7 +1344,7 @@ function App() {
     localStorage.removeItem('token');
     setToken('');
     setAndStoreUser(null);
-    setActiveTab('track');
+    switchTab('track');
     showAlert('Logged out successfully', 'success');
   };
 
@@ -2059,8 +2290,13 @@ function App() {
   };
 
   const handleHistoryPressStart = (id, e) => {
+    if (selectedHistoryIds.length > 0) {
+      // In selection mode: tap immediately toggles selection without press-scaling
+      return;
+    }
     cancelLongPress();
     isLongPressTriggeredRef.current = false;
+    longPressedItemIdRef.current = null;
     setPressingHistoryId(id);
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -2068,6 +2304,7 @@ function App() {
 
     longPressTimerRef.current = setTimeout(() => {
       isLongPressTriggeredRef.current = true;
+      longPressedItemIdRef.current = id;
       setPressingHistoryId(null);
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try { navigator.vibrate(40); } catch {}
@@ -2079,6 +2316,11 @@ function App() {
           return [...prev, id];
         }
       });
+      // Safety auto-reset so long press only blocks immediate release of THIS item, never future clicks
+      setTimeout(() => {
+        isLongPressTriggeredRef.current = false;
+        longPressedItemIdRef.current = null;
+      }, 250);
     }, 450);
   };
 
@@ -2094,13 +2336,27 @@ function App() {
 
   const handleHistoryPressEnd = () => {
     cancelLongPress();
+    if (isLongPressTriggeredRef.current) {
+      setTimeout(() => {
+        isLongPressTriggeredRef.current = false;
+        longPressedItemIdRef.current = null;
+      }, 100);
+    }
   };
 
-  const handleHistoryItemClick = (id) => {
-    if (isLongPressTriggeredRef.current) {
+  const handleHistoryItemClick = (transactionOrId) => {
+    const t = typeof transactionOrId === 'object' && transactionOrId !== null
+      ? transactionOrId
+      : historyTransactions.find(item => item._id === transactionOrId);
+    const id = t ? t._id : transactionOrId;
+
+    // Only ignore the immediate synthetic click on the exact item that was just long-pressed
+    if (longPressedItemIdRef.current === id) {
+      longPressedItemIdRef.current = null;
       isLongPressTriggeredRef.current = false;
       return;
     }
+
     if (selectedHistoryIds.length > 0) {
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try { navigator.vibrate(35); } catch {}
@@ -2112,6 +2368,18 @@ function App() {
           return [...prev, id];
         }
       });
+    } else {
+      if (!t) return;
+      if (t.isGroupTotalSummary) {
+        if (t.sharedGroupId) {
+          setFilterGroup(t.sharedGroupId);
+        }
+      } else {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(25); } catch {}
+        }
+        setSelectedTransactionDetails(t);
+      }
     }
   };
 
@@ -2905,7 +3173,7 @@ function App() {
                       if (n.group?._id) {
                         setFilterGroup(n.group._id);
                         localStorage.setItem('filterGroup', n.group._id);
-                        setActiveTab('groups');
+                        switchTab('groups');
                       }
                       setShowNotificationsTray(false);
                     }}
@@ -2971,24 +3239,37 @@ function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="main-content animate-fade-in">
-
-        {/* ==================== TAB 1: TRACK EXPENSES (FIRST PAGE) ==================== */}
-        {activeTab === 'track' && (
-          <div>
+      <main 
+        className="main-content tab-slider-main"
+        onTouchStart={onSliderTouchStart}
+        onTouchMove={onSliderTouchMove}
+        onTouchEnd={onSliderTouchEnd}
+        onTouchCancel={onSliderTouchEnd}
+        onClickCapture={handleMainClickCapture}
+      >
+        <div
+          ref={trackRef}
+          className="tab-slider-track"
+          style={{
+            transform: `translateX(-${APP_TABS.indexOf(activeTab) * 25}%)`
+          }}
+        >
+          {/* ==================== TAB 1: TRACK EXPENSES (FIRST PAGE) ==================== */}
+          <div className="tab-pane" ref={el => { tabPanesRef.current[0] = el; }}>
+            <div>
             
             {/* Filter Scope Selector if user has groups */}
             {groups.length > 0 && renderScopeSelector()}
 
             {/* Quick stats dashboard widget */}
             <div className="form-row" style={{ marginBottom: '16px' }}>
-              <div className="glass-card" style={{ marginBottom: 0, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Today's Spending</span>
-                <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)' }}>৳{totals.today.toLocaleString()}</span>
+              <div className="glass-card" style={{ marginBottom: 0, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, overflow: 'hidden' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Today's Spending</span>
+                <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${totals.today.toLocaleString()}`}>৳{totals.today.toLocaleString()}</span>
               </div>
-              <div className="glass-card" style={{ marginBottom: 0, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{currentMonthName}</span>
+              <div className="glass-card" style={{ marginBottom: 0, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minWidth: 0, gap: '4px' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentMonthName}</span>
                   {activeBudget > 0 && (
                     <span style={{ 
                       fontSize: '11px', 
@@ -2996,20 +3277,24 @@ function App() {
                       color: totals.month > activeBudget ? 'var(--danger-color)' : 'var(--success-color)',
                       background: totals.month > activeBudget ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
                       padding: '2px 6px',
-                      borderRadius: '6px'
+                      borderRadius: '6px',
+                      flexShrink: 0
                     }}>
                       {Math.round((totals.month / activeBudget) * 100)}%
                     </span>
                   )}
                 </div>
-                <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--primary-color)' }}>৳{totals.month.toLocaleString()}</span>
+                <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--primary-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${totals.month.toLocaleString()}`}>৳{totals.month.toLocaleString()}</span>
                 {activeBudget > 0 && (
                   <span style={{ 
                     fontSize: '11px', 
                     color: (activeBudget - totals.month) < 0 ? 'var(--danger-color)' : 'var(--text-muted)',
                     fontWeight: 500,
-                    marginTop: '2px'
-                  }}>
+                    marginTop: '2px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }} title={`Remaining: ৳${(activeBudget - totals.month).toLocaleString()}`}>
                     Remaining: ৳{(activeBudget - totals.month).toLocaleString()}
                   </span>
                 )}
@@ -3131,21 +3416,21 @@ function App() {
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {memberBreakdown.map(member => (
-                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
                         {renderAvatar(member.profilePic, 32)}
-                        <div>
-                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={`${member.username} ${member.email === user?.email ? '(Me)' : ''}`}>
                             {member.username} {member.email === user?.email ? '(Me)' : ''}
                           </span>
-                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>{member.email}</span>
+                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={member.email}>{member.email}</span>
                         </div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', display: 'block' }}>
+                      <div style={{ textAlign: 'right', flexShrink: 0, maxWidth: '140px', overflow: 'hidden' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Today: ৳${member.today.toLocaleString()}`}>
                           Today: ৳{member.today.toLocaleString()}
                         </span>
-                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: '600' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: '600', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Month: ৳${member.month.toLocaleString()}`}>
                           Month: ৳{member.month.toLocaleString()}
                         </span>
                       </div>
@@ -3162,7 +3447,7 @@ function App() {
                   Recent Expenses
                 </h3>
                 <button
-                  onClick={() => setActiveTab('history')}
+                  onClick={() => switchTab('history')}
                   style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', color: 'var(--primary-color)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
                 >
                   View All <ChevronRight size={16} />
@@ -3179,52 +3464,87 @@ function App() {
                     const matchedCat = categories.find(c => c.name === t.category);
                     const catColor = t.isGroupTotalSummary ? 'var(--primary-color)' : (matchedCat?.color || 'var(--text-muted)');
                     return (
-                      <div key={t._id} className="transaction-item animate-fade-in">
-                        <div className="transaction-info">
-                          <span className="transaction-name">{t.itemName}</span>
-                          <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                      <div 
+                        key={t._id} 
+                        className="transaction-item animate-fade-in"
+                        onClick={() => {
+                          if (t.isGroupTotalSummary) {
+                            if (t.sharedGroupId) setFilterGroup(t.sharedGroupId);
+                          } else {
+                            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                              try { navigator.vibrate(25); } catch {}
+                            }
+                            setSelectedTransactionDetails(t);
+                          }
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        {/* Left side: Information Column */}
+                        <div className="transaction-info" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span className="transaction-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={t.itemName}>
+                            {t.itemName}
+                          </span>
+
+                          {/* Row 2: Category / Expenses Count Badge */}
+                          <div className="transaction-meta" style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '2px 0 1px 0', overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
                             {t.isGroupTotalSummary ? (
-                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                Shared Group ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}) • {t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}
+                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%', fontSize: '11.5px', fontWeight: '600' }} title={`${t.itemCount} ${t.itemCount === 1 ? 'expense' : 'expenses'}`}>
+                                {t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}
                               </span>
                             ) : (
                               <>
-                                <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
+                                <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor, whiteSpace: 'nowrap', flexShrink: 0 }}>
                                   {t.category}
                                 </span>
                                 {t.isSharedGroupCost && t.originalItemName && (
-                                  <span className="badge" style={{ backgroundColor: 'var(--surface-subtle)', color: 'var(--text-secondary)', border: '1px solid var(--card-border)' }}>
+                                  <span className="badge" style={{ backgroundColor: 'var(--surface-subtle)', color: 'var(--text-secondary)', border: '1px solid var(--card-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', flexShrink: 1 }} title={t.originalItemName}>
                                     📝 {t.originalItemName}
                                   </span>
                                 )}
                                 {t.isPending && (
-                                  <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                                  <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                     ⏳ Sync Pending
-                                  </span>
-                                )}
-                                {t.group && (
-                                  <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                    👥 {t.group.name || t.group}
                                   </span>
                                 )}
                               </>
                             )}
-                            {!t.isGroupTotalSummary && (
-                              <span style={{ color: 'var(--text-muted)' }}>
+                          </div>
+
+                          {/* Row 3: Group Name below Category (for regular items) */}
+                          {!t.isGroupTotalSummary && t.group && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '1px 0 2px 0', overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
+                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%', flexShrink: 1, fontSize: '11.5px', fontWeight: '600' }} title={t.group.name || t.group}>
+                                👥 {t.group.name || t.group}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Row 4 (or Row 3 for group summary): Date / Month & user */}
+                          {t.isGroupTotalSummary ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px', width: '100%' }}>
+                              <span>{t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}</span>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px', width: '100%' }}>
+                              <span style={{ flexShrink: 0 }}>
                                 {parseLocalDate(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                               </span>
-                            )}
-                            {!t.isGroupTotalSummary && t.group && t.user && (
-                              <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
-                              </span>
-                            )}
-                          </div>
+                              {t.group && t.user && (
+                                <span style={{ fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', flexShrink: 1 }}>
+                                  • by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="transaction-amount">
-                          <span>৳{(t.cost * t.quantity).toLocaleString()}</span>
+
+                        {/* Right side: Cost Amount - VERTICALLY CENTERED */}
+                        <div className="transaction-amount" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', flexShrink: 0, marginLeft: '10px' }}>
+                          <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', whiteSpace: 'nowrap' }} title={`৳${(t.cost * t.quantity).toLocaleString()}`}>
+                            ৳{(t.cost * t.quantity).toLocaleString()}
+                          </span>
                           {t.quantity > 1 && (
-                            <span className="transaction-qty">
+                            <span className="transaction-qty" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                               {t.quantity} x ৳{t.cost}
                             </span>
                           )}
@@ -3236,36 +3556,40 @@ function App() {
               </div>
             </div>
 
+            </div>
           </div>
-        )}
 
-        {/* ==================== TAB 2: DETAILED HISTORY ==================== */}
-        {activeTab === 'history' && (
-          <div>
+          {/* ==================== TAB 2: DETAILED HISTORY ==================== */}
+          <div className="tab-pane" ref={el => { tabPanesRef.current[1] = el; }}>
+            <div>
             {/* Filter Scope Selector if user has groups */}
             {groups.length > 0 && renderScopeSelector()}
             {/* Remaining Balance Section (Current Month) */}
-            <div className="glass-card" style={{ marginBottom: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
+            <div className="glass-card" style={{ marginBottom: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minWidth: 0, gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   Remaining Balance ({currentMonthName})
                 </span>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px', flexShrink: 0 }} title={`Scope: ${filterGroup === 'personal' ? 'Personal' : activeGroupObj?.name || 'Group'}`}>
                   Scope: {filterGroup === 'personal' ? 'Personal' : activeGroupObj?.name || 'Group'}
                 </span>
               </div>
               
               {activeBudget > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '6px', minWidth: 0 }}>
                     <span style={{ 
                       fontSize: '32px', 
                       fontWeight: '800', 
-                      color: (activeBudget - totals.month) < 0 ? 'var(--danger-color)' : 'var(--success-color)' 
-                    }}>
+                      color: (activeBudget - totals.month) < 0 ? 'var(--danger-color)' : 'var(--success-color)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: '100%'
+                    }} title={`৳${(activeBudget - totals.month).toLocaleString()}`}>
                       ৳{(activeBudget - totals.month).toLocaleString()}
                     </span>
-                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={`Spent: ৳${totals.month.toLocaleString()} / ৳${activeBudget.toLocaleString()}`}>
                       Spent: ৳{totals.month.toLocaleString()} / ৳{activeBudget.toLocaleString()}
                     </span>
                   </div>
@@ -3297,11 +3621,11 @@ function App() {
                     flexDirection: 'column',
                     gap: '6px'
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '4px', minWidth: 0 }}>
                       <span style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary-color)' }}>
                         Burn rate projection
                       </span>
-                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={`Pace: ৳${currentMonthBurnData.dailyAvg.toLocaleString()}/day`}>
                         Pace: ৳{currentMonthBurnData.dailyAvg.toLocaleString()}/day
                       </span>
                     </div>
@@ -3455,11 +3779,11 @@ function App() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px 16px', borderRadius: 'var(--radius-md)', background: 'var(--surface-subtle)', border: '1px solid var(--card-border)', marginBottom: '16px' }}>
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px 16px', borderRadius: 'var(--radius-md)', background: 'var(--surface-subtle)', border: '1px solid var(--card-border)', marginBottom: '16px', minWidth: 0, overflow: 'hidden' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={historySpentLabel}>
                   {historySpentLabel}
                 </span>
-                <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--primary-color)' }}>৳{historyTotal.toLocaleString()}</span>
+                <span style={{ fontSize: '28px', fontWeight: '800', color: 'var(--primary-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${historyTotal.toLocaleString()}`}>৳{historyTotal.toLocaleString()}</span>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3490,14 +3814,16 @@ function App() {
                             e.preventDefault();
                           }
                         }}
-                        onClick={() => handleHistoryItemClick(t._id)}
+                        onClick={() => handleHistoryItemClick(t)}
                         style={{
                           marginBottom: 0,
-                          padding: '16px',
+                          padding: '14px 16px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          cursor: isSelectionMode ? 'pointer' : 'default',
+                          minHeight: '76px',
+                          boxSizing: 'border-box',
+                          cursor: 'pointer',
                           userSelect: 'none',
                           WebkitUserSelect: 'none',
                           WebkitTouchCallout: 'none',
@@ -3506,7 +3832,7 @@ function App() {
                             : undefined,
                           borderColor: isSelected ? 'var(--primary-color)' : undefined,
                           boxShadow: isSelected ? '0 0 0 1px var(--primary-color)' : undefined,
-                          transform: pressingHistoryId === t._id ? 'scale(0.985)' : 'scale(1)',
+                          transform: (!isSelectionMode && pressingHistoryId === t._id) ? 'scale(0.985)' : 'scale(1)',
                           transition: 'background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease'
                         }}
                       >
@@ -3516,125 +3842,265 @@ function App() {
                             minWidth: isSelectionMode ? '22px' : '0px',
                             marginRight: isSelectionMode ? '12px' : '0px',
                             opacity: isSelectionMode ? 1 : 0,
-                            transform: isSelectionMode ? 'translateX(0) scale(1)' : 'translateX(-16px) scale(0.5)',
+                            transform: isSelectionMode ? 'translateX(0) scale(1)' : 'translateX(-8px) scale(0.7)',
                             display: 'flex', 
                             alignItems: 'center', 
-                            justifyContent: 'center',
+                            justifyContent: 'center', 
                             flexShrink: 0,
-                            overflow: 'hidden',
+                            overflow: isSelectionMode ? 'visible' : 'hidden',
                             pointerEvents: isSelectionMode ? 'auto' : 'none',
-                            transition: 'width 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), min-width 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), margin-right 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.22s ease, transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                            transition: 'width 0.22s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.22s cubic-bezier(0.16, 1, 0.3, 1), margin-right 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)'
                           }}
                         >
                           <div
                             style={{
-                              width: '20px',
-                              height: '20px',
+                              width: '22px',
+                              height: '22px',
+                              minWidth: '22px',
+                              minHeight: '22px',
+                              maxWidth: '22px',
+                              maxHeight: '22px',
+                              aspectRatio: '1 / 1',
                               borderRadius: '50%',
+                              boxSizing: 'border-box',
                               border: isSelected ? 'none' : '2px solid var(--card-border)',
                               backgroundColor: isSelected ? 'var(--primary-color)' : 'transparent',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              transform: isSelected ? 'scale(1.05)' : 'scale(1)',
-                              transition: 'background-color 0.2s ease, border-color 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                              flexShrink: 0,
+                              transition: 'background-color 0.18s ease, border-color 0.18s ease'
                             }}
                           >
-                            {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} className="animate-scale-in" />}
+                            {isSelected && <Check size={13} color="#ffffff" strokeWidth={3} style={{ display: 'block', flexShrink: 0 }} />}
                           </div>
                         </div>
 
-                        <div className="transaction-info" style={{ flex: 1, paddingRight: '12px' }}>
-                          <span className="transaction-name" style={{ fontSize: '16px' }}>{t.itemName}</span>
-                          <div className="transaction-meta" style={{ flexWrap: 'wrap', gap: '6px', margin: '4px 0' }}>
+                        <div className="transaction-info" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px', paddingRight: '10px' }}>
+                          <span 
+                            className="transaction-name" 
+                            style={{ 
+                              fontSize: '15.5px', 
+                              fontWeight: '600',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              display: 'block',
+                              lineHeight: '1.3'
+                            }}
+                            title={t.itemName}
+                          >
+                            {t.itemName}
+                          </span>
+
+                          {/* Row 2: Category / Shared Group Badge */}
+                          <div 
+                            className="transaction-meta" 
+                            style={{ 
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px', 
+                              margin: '2px 0 1px 0',
+                              overflow: 'hidden',
+                              whiteSpace: 'nowrap',
+                              width: '100%'
+                            }}
+                          >
                             {t.isGroupTotalSummary ? (
-                              <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                Shared Group ({t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}) • {t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}
+                              <span 
+                                className="badge" 
+                                style={{ 
+                                  backgroundColor: 'var(--primary-light)', 
+                                  color: 'var(--primary-color)', 
+                                  border: '1px solid var(--primary-border)',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  maxWidth: '100%',
+                                  fontSize: '11.5px',
+                                  fontWeight: '600'
+                                }}
+                                title={`${t.itemCount} ${t.itemCount === 1 ? 'expense' : 'expenses'}`}
+                              >
+                                {t.itemCount} {t.itemCount === 1 ? 'expense' : 'expenses'}
                               </span>
                             ) : (
                               <>
-                                <span className="badge" style={{ backgroundColor: `${catColor}20`, color: catColor }}>
+                                <span 
+                                  className="badge" 
+                                  style={{ 
+                                    backgroundColor: `${catColor}20`, 
+                                    color: catColor,
+                                    whiteSpace: 'nowrap',
+                                    flexShrink: 0
+                                  }}
+                                >
                                   {t.category}
                                 </span>
                                 {t.isSharedGroupCost && t.originalItemName && (
-                                  <span className="badge" style={{ backgroundColor: 'var(--surface-subtle)', color: 'var(--text-secondary)', border: '1px solid var(--card-border)' }}>
+                                  <span 
+                                    className="badge" 
+                                    style={{ 
+                                      backgroundColor: 'var(--surface-subtle)', 
+                                      color: 'var(--text-secondary)', 
+                                      border: '1px solid var(--card-border)',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      maxWidth: '140px',
+                                      flexShrink: 1
+                                    }}
+                                    title={t.originalItemName}
+                                  >
                                     📝 {t.originalItemName}
                                   </span>
                                 )}
                                 {t.isPending && (
-                                  <span className="badge" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fcd34d', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                                  <span 
+                                    className="badge" 
+                                    style={{ 
+                                      backgroundColor: 'rgba(245, 158, 11, 0.15)', 
+                                      color: '#fcd34d', 
+                                      border: '1px solid rgba(245, 158, 11, 0.25)',
+                                      whiteSpace: 'nowrap',
+                                      flexShrink: 0
+                                    }}
+                                  >
                                     ⏳ Sync Pending
-                                  </span>
-                                )}
-                                {t.group && (
-                                  <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
-                                    👥 {t.group.name || t.group}
                                   </span>
                                 )}
                               </>
                             )}
-                            {!t.isGroupTotalSummary && (
-                              <span style={{ color: 'var(--text-muted)' }}>
+                          </div>
+
+                          {/* Row 3: Group Name below Category */}
+                          {!t.isGroupTotalSummary && t.group && (
+                            <div 
+                              style={{ 
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                margin: '1px 0 2px 0',
+                                overflow: 'hidden',
+                                whiteSpace: 'nowrap',
+                                width: '100%'
+                              }}
+                            >
+                              <span 
+                                className="badge" 
+                                style={{ 
+                                  backgroundColor: 'var(--primary-light)', 
+                                  color: 'var(--primary-color)', 
+                                  border: '1px solid var(--primary-border)',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  maxWidth: '100%',
+                                  flexShrink: 1,
+                                  fontSize: '11.5px',
+                                  fontWeight: '600'
+                                }}
+                                title={t.group.name || t.group}
+                              >
+                                👥 {t.group.name || t.group}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Row 4 (or Row 3 for group summary): Date / Month, User, Quantity */}
+                          {t.isGroupTotalSummary ? (
+                            <div 
+                              style={{ 
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '12px',
+                                color: 'var(--text-muted)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                lineHeight: '1.2',
+                                marginTop: '1px',
+                                width: '100%'
+                              }}
+                            >
+                              <span>{t.monthName || parseLocalDate(t.date).toLocaleString('en-US', { month: 'long' })}</span>
+                            </div>
+                          ) : (
+                            <div 
+                              style={{ 
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '12px',
+                                color: 'var(--text-muted)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                lineHeight: '1.2',
+                                marginTop: '1px',
+                                width: '100%'
+                              }}
+                            >
+                              <span style={{ flexShrink: 0 }}>
                                 {parseLocalDate(t.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                               </span>
-                            )}
-                            {!t.isGroupTotalSummary && t.group && t.user && (
-                              <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                (by {t.user._id === user?.id || t.user === user?.id ? 'Me' : t.user.username})
-                              </span>
-                            )}
-                          </div>
-                          {t.quantity > 1 && (
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                              Qty: {t.quantity} • Unit: ৳{t.cost}
-                            </span>
+                              {t.group && t.user && (
+                                <span style={{ fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', flexShrink: 1 }}>
+                                  • by {t.user._id === user?.id || t.user === user?.id ? 'Me' : (t.user.username || 'Member')}
+                                </span>
+                              )}
+                              {t.quantity > 1 && (
+                                <span style={{ flexShrink: 0, fontWeight: '500' }}>
+                                  • Qty: {t.quantity} (৳{t.cost})
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <span style={{ fontSize: '18px', fontWeight: '700' }}>৳{(t.cost * t.quantity).toLocaleString()}</span>
-                          {t.isGroupTotalSummary ? (
+                        {/* Right side: Costing value & Delete button - VERTICALLY CENTERED */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '12px' }}>
+                          <span 
+                            style={{ 
+                              fontSize: '17px', 
+                              fontWeight: '700', 
+                              color: 'var(--text-primary)',
+                              whiteSpace: 'nowrap', 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis', 
+                              maxWidth: '130px' 
+                            }} 
+                            title={`৳${(t.cost * t.quantity).toLocaleString()}`}
+                          >
+                            ৳{(t.cost * t.quantity).toLocaleString()}
+                          </span>
+                          {!t.isGroupTotalSummary && (t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
                             <button
-                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setFilterGroup(t.sharedGroupId);
+                                handleDeleteTransaction(t._id);
                               }}
                               onMouseDown={(e) => e.stopPropagation()}
                               onTouchStart={(e) => e.stopPropagation()}
-                              style={{
-                                background: 'var(--primary-light)',
-                                border: '1px solid var(--primary-border)',
-                                color: 'var(--primary-color)',
-                                cursor: 'pointer',
-                                padding: '6px',
-                                borderRadius: '8px',
-                                display: 'inline-flex',
+                              style={{ 
+                                background: 'none', 
+                                border: 'none', 
+                                color: 'var(--danger-color)', 
+                                cursor: 'pointer', 
+                                padding: '5px', 
+                                borderRadius: '7px', 
+                                transition: 'background 0.2s',
+                                display: isSelectionMode ? 'none' : 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                transition: 'all 0.2s'
+                                flexShrink: 0
                               }}
-                              title={`View ${t.sharedGroupName} details`}
-                              aria-label={`View ${t.sharedGroupName} details`}
+                              title="Delete transaction"
+                              disabled={syncLoading}
                             >
-                              <Eye size={18} />
+                              <Trash2 size={16} />
                             </button>
-                          ) : (
-                            (t.isPending || t.user?._id === user?.id || t.user === user?.id || (t.group && (t.group.owner?._id === user?.id || t.group.owner === user?.id || (typeof t.group.owner === 'string' && t.group.owner === user?.id)))) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteTransaction(t._id);
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onTouchStart={(e) => e.stopPropagation()}
-                                style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', padding: '6px', borderRadius: '8px', transition: 'background 0.2s' }}
-                                title="Delete transaction"
-                                disabled={syncLoading}
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            )
                           )}
                         </div>
                       </div>
@@ -3671,21 +4137,21 @@ function App() {
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {memberBreakdown.map(member => (
-                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
                         {renderAvatar(member.profilePic, 32)}
-                        <div>
-                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                        <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={`${member.username} ${member.email === user?.email ? '(Me)' : ''}`}>
                             {member.username} {member.email === user?.email ? '(Me)' : ''}
                           </span>
-                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)' }}>{member.email}</span>
+                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={member.email}>{member.email}</span>
                         </div>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', display: 'block' }}>
+                      <div style={{ textAlign: 'right', flexShrink: 0, maxWidth: '140px', overflow: 'hidden' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Today: ৳${member.today.toLocaleString()}`}>
                           Today: ৳{member.today.toLocaleString()}
                         </span>
-                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: '600' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--primary-color)', fontWeight: '600', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Month: ৳${member.month.toLocaleString()}`}>
                           Month: ৳{member.month.toLocaleString()}
                         </span>
                       </div>
@@ -3696,9 +4162,9 @@ function App() {
             )}
 
             {/* Category Spend Breakdown Section */}
-            <div className="glass-card" style={{ marginTop: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <PieChart size={20} style={{ color: 'var(--primary-color)' }} /> Category Spend Breakdown
+            <div className="glass-card" style={{ marginTop: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <PieChart size={20} style={{ color: 'var(--primary-color)', flexShrink: 0 }} /> Category Spend Breakdown
               </h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>
                 Spend distribution by category for a specific month and year.
@@ -3706,11 +4172,11 @@ function App() {
 
               {/* Month/Year Selectors */}
               <div style={{ display: 'flex', gap: '10px', background: 'var(--surface-subtle)', padding: '10px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <label style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Month</label>
                   <select
                     className="form-input"
-                    style={{ padding: '6px 10px', fontSize: '13px', height: '34px', margin: 0 }}
+                    style={{ padding: '6px 10px', fontSize: '13px', height: '34px', margin: 0, width: '100%' }}
                     value={historySelectedMonth}
                     onChange={e => setHistorySelectedMonth(Number(e.target.value))}
                   >
@@ -3719,11 +4185,11 @@ function App() {
                     ))}
                   </select>
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <label style={{ fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Year</label>
                   <select
                     className="form-input"
-                    style={{ padding: '6px 10px', fontSize: '13px', height: '34px', margin: 0 }}
+                    style={{ padding: '6px 10px', fontSize: '13px', height: '34px', margin: 0, width: '100%' }}
                     value={historySelectedYear}
                     onChange={e => setHistorySelectedYear(Number(e.target.value))}
                   >
@@ -3735,40 +4201,42 @@ function App() {
               </div>
 
               {/* Target Budget and Remaining Balance display for the selected period */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface-subtle)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
-                <div>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Period Budget Target</span>
-                  <span style={{ fontSize: '16px', fontWeight: '800' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface-subtle)', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--card-border)', minWidth: 0, overflow: 'hidden' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Period Budget Target</span>
+                  <span style={{ fontSize: '16px', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={activeBudgetForSelectedPeriod > 0 ? `৳${activeBudgetForSelectedPeriod.toLocaleString()}` : 'No Budget Set'}>
                     {activeBudgetForSelectedPeriod > 0 ? `৳${activeBudgetForSelectedPeriod.toLocaleString()}` : 'No Budget Set'}
                   </span>
                 </div>
                 {activeBudgetForSelectedPeriod > 0 && (
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Remaining Balance</span>
+                  <div style={{ textAlign: 'right', minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Remaining Balance</span>
                     <span style={{ 
                       fontSize: '16px', 
                       fontWeight: '800', 
-                      color: (activeBudgetForSelectedPeriod - categoryBreakdown.totalSpent) < 0 ? 'var(--danger-color)' : 'var(--success-color)'
-                    }}>
+                      color: (activeBudgetForSelectedPeriod - categoryBreakdown.totalSpent) < 0 ? 'var(--danger-color)' : 'var(--success-color)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'block'
+                    }} title={`৳${(activeBudgetForSelectedPeriod - categoryBreakdown.totalSpent).toLocaleString()}`}>
                       ৳{(activeBudgetForSelectedPeriod - categoryBreakdown.totalSpent).toLocaleString()}
                     </span>
                   </div>
                 )}
               </div>
 
-
-
               {/* Category Breakdown list */}
               {categoryBreakdown.breakdown.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '4px', overflow: 'hidden' }}>
                   {categoryBreakdown.breakdown.map((item, idx) => (
-                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
-                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: item.color, display: 'inline-block' }} />
-                          {item.name}
+                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', gap: '8px', minWidth: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600', minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: item.color, display: 'inline-block', flexShrink: 0 }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>{item.name}</span>
                         </span>
-                        <span style={{ fontWeight: '700' }}>
+                        <span style={{ fontWeight: '700', flexShrink: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${item.amount.toLocaleString()} (${item.percentage}%)`}>
                           ৳{item.amount.toLocaleString()} <span style={{ color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 'normal' }}>({item.percentage}%)</span>
                         </span>
                       </div>
@@ -3785,9 +4253,9 @@ function App() {
                     </div>
                   ))}
                   
-                  <div style={{ borderTop: '1px solid var(--card-border)', paddingTop: '10px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: '700' }}>
-                    <span>Total Period Spending</span>
-                    <span style={{ color: 'var(--primary-color)', fontSize: '16px' }}>৳{categoryBreakdown.totalSpent.toLocaleString()}</span>
+                  <div style={{ borderTop: '1px solid var(--card-border)', paddingTop: '10px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: '700', gap: '8px', minWidth: 0 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Total Period Spending</span>
+                    <span style={{ color: 'var(--primary-color)', fontSize: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }} title={`৳${categoryBreakdown.totalSpent.toLocaleString()}`}>৳{categoryBreakdown.totalSpent.toLocaleString()}</span>
                   </div>
                 </div>
               ) : (
@@ -3877,7 +4345,7 @@ function App() {
                   animation: 'fadeIn 0.2s ease-in-out'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, overflow: 'hidden' }}>
                   <div
                     style={{
                       background: 'var(--primary-color)',
@@ -3889,16 +4357,17 @@ function App() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontSize: '12px',
-                      fontWeight: '700'
+                      fontWeight: '700',
+                      flexShrink: 0
                     }}
                   >
                     {selectedHistoryIds.length}
                   </div>
-                  <div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       Selected Total Spent
                     </div>
-                    <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                    <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${selectedHistoryTotal.toLocaleString()}`}>
                       ৳{selectedHistoryTotal.toLocaleString()}
                     </div>
                   </div>
@@ -3926,12 +4395,12 @@ function App() {
                 </button>
               </div>
             )}
+            </div>
           </div>
-        )}
 
-        {/* ==================== TAB 3: SHARED COST GROUPS ==================== */}
-        {activeTab === 'groups' && (
-          <div>
+          {/* ==================== TAB 3: SHARED COST GROUPS ==================== */}
+          <div className="tab-pane" ref={el => { tabPanesRef.current[2] = el; }}>
+            <div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               
               {/* Info Widget */}
@@ -4017,16 +4486,18 @@ function App() {
                     return (
                       <div key={g._id} className="glass-card" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
-                          <div>
-                            <h4 style={{ fontSize: '17px', fontWeight: '700', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                              {g.name}
+                          <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                            <h4 style={{ fontSize: '17px', fontWeight: '700', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0 }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }} title={g.name}>
+                                {g.name}
+                              </span>
                               {g.budget > 0 && (
-                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--primary-color)', background: 'var(--primary-light)', border: '1px solid var(--primary-border)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--primary-color)', background: 'var(--primary-light)', border: '1px solid var(--primary-border)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }} title={`Budget: ৳${g.budget.toLocaleString()}`}>
                                   Budget: ৳{g.budget.toLocaleString()}
                                 </span>
                               )}
                             </h4>
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', maxWidth: '240px' }} title={`Managed by: ${isOwner ? 'You (Owner)' : g.owner?.username || 'Group Owner'}`}>
                               Managed by: {isOwner ? 'You (Owner)' : g.owner?.username || 'Group Owner'}
                             </span>
                           </div>
@@ -4277,14 +4748,13 @@ function App() {
                   })
                 )}
               </div>
-
+            </div>
             </div>
           </div>
-        )}
 
-        {/* ==================== TAB 4: SETTINGS ==================== */}
-        {activeTab === 'settings' && (
-          <div>
+          {/* ==================== TAB 4: SETTINGS ==================== */}
+          <div className="tab-pane" ref={el => { tabPanesRef.current[3] = el; }}>
+            <div>
             {showAdminPanel ? (
               <div className="glass-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', borderBottom: '1px solid var(--card-border)', paddingBottom: '16px' }}>
@@ -5084,9 +5554,9 @@ function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto', paddingRight: '4px' }}>
                 {settingsCategories.map(cat => (
                   <div key={cat._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--surface-subtle)', borderRadius: '10px', border: '1px solid var(--card-border)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: cat.color }}></span>
-                      <span style={{ fontWeight: 500 }}>{cat.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1, marginRight: '8px' }}>
+                      <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: cat.color, flexShrink: 0 }}></span>
+                      <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cat.name}>{cat.name}</span>
                     </div>
                     
                     {canDeleteCategory(cat) && (
@@ -5239,14 +5709,15 @@ function App() {
           </>
         )}
       </div>
-    )}
+          </div>
+        </div>
       </main>
 
       {/* Mobile Sticky Bottom Tab Bar */}
       <nav className="app-nav">
         <button
           className={`nav-item ${activeTab === 'track' ? 'active' : ''}`}
-          onClick={() => setActiveTab('track')}
+          onClick={() => switchTab('track')}
         >
           <Wallet size={22} />
           <span>Track</span>
@@ -5254,7 +5725,7 @@ function App() {
         
         <button
           className={`nav-item ${activeTab === 'history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
+          onClick={() => switchTab('history')}
         >
           <ClipboardList size={22} />
           <span>History</span>
@@ -5262,7 +5733,7 @@ function App() {
 
         <button
           className={`nav-item ${activeTab === 'groups' ? 'active' : ''}`}
-          onClick={() => setActiveTab('groups')}
+          onClick={() => switchTab('groups')}
         >
           <Users size={22} />
           <span>Groups</span>
@@ -5270,7 +5741,7 @@ function App() {
         
         <button
           className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-          onClick={() => setActiveTab('settings')}
+          onClick={() => switchTab('settings')}
         >
           <SettingsIcon size={22} />
           <span>Settings</span>
@@ -5452,8 +5923,8 @@ function App() {
             }}>
               {/* Modal Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
-                <div>
-                  <h3 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', margin: 0 }}>
+                <div style={{ minWidth: 0, flex: 1, marginRight: '12px' }}>
+                  <h3 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${selectedGroupDetails.name} Analytics`}>
                     {selectedGroupDetails.name} Analytics
                   </h3>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -5563,15 +6034,15 @@ function App() {
 
               {/* Stats Breakdown Widgets */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Remaining Balance</span>
-                  <span style={{ fontSize: '18px', fontWeight: '800', color: filteredRemainingBalance >= 0 ? 'var(--success-color)' : '#ef4444' }}>
+                  <span style={{ fontSize: '18px', fontWeight: '800', color: filteredRemainingBalance >= 0 ? 'var(--success-color)' : '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${filteredRemainingBalance.toLocaleString()}`}>
                     ৳{filteredRemainingBalance.toLocaleString()}
                   </span>
                 </div>
-                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Daily Avg (Filter Range)</span>
-                  <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                  <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${Math.round(dailyAvg).toLocaleString()}`}>
                     ৳{Math.round(dailyAvg).toLocaleString()}
                   </span>
                 </div>
@@ -5604,15 +6075,15 @@ function App() {
                 </h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
                   {memberAnalyticsList.map(member => (
-                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
-                      <div>
-                        <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                    <div key={member.email} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)', gap: '10px' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={member.username}>
                           {member.username}
                         </span>
-                        <span style={{ display: 'block', fontSize: '10px', color: 'var(--text-muted)' }}>{member.email}</span>
+                        <span style={{ display: 'block', fontSize: '10px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={member.email}>{member.email}</span>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <span style={{ fontSize: '13.5px', fontWeight: '800', color: 'var(--primary-color)' }}>
+                      <div style={{ textAlign: 'right', flexShrink: 0, maxWidth: '120px' }}>
+                        <span style={{ fontSize: '13.5px', fontWeight: '800', color: 'var(--primary-color)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${member.spent.toLocaleString()}`}>
                           ৳{member.spent.toLocaleString()}
                         </span>
                       </div>
@@ -6028,15 +6499,15 @@ function App() {
 
               {/* Stats Breakdown Widgets */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Remaining Balance</span>
-                  <span style={{ fontSize: '18px', fontWeight: '800', color: filteredRemainingBalance >= 0 ? 'var(--success-color)' : '#ef4444' }}>
+                  <span style={{ fontSize: '18px', fontWeight: '800', color: filteredRemainingBalance >= 0 ? 'var(--success-color)' : '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${filteredRemainingBalance.toLocaleString()}`}>
                     ৳{filteredRemainingBalance.toLocaleString()}
                   </span>
                 </div>
-                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="glass-card" style={{ margin: 0, padding: '12px', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Daily Avg (Filter Range)</span>
-                  <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                  <span style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${Math.round(dailyAvg).toLocaleString()}`}>
                     ৳{Math.round(dailyAvg).toLocaleString()}
                   </span>
                 </div>
@@ -6072,16 +6543,16 @@ function App() {
                     <span style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', display: 'block', padding: '10px 0' }}>No spending data for this period.</span>
                   ) : (
                     periodCategoryBreakdown.map(cat => (
-                      <div key={cat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: cat.color }} />
-                          <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                      <div key={cat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-subtle-hover)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: cat.color, flexShrink: 0 }} />
+                          <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cat.name}>
                             {cat.name}
                           </span>
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({cat.percentage}%)</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>({cat.percentage}%)</span>
                         </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontSize: '13.5px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                        <div style={{ textAlign: 'right', flexShrink: 0, maxWidth: '120px' }}>
+                          <span style={{ fontSize: '13.5px', fontWeight: '800', color: 'var(--text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${cat.amount.toLocaleString()}`}>
                             ৳{cat.amount.toLocaleString()}
                           </span>
                         </div>
@@ -6436,6 +6907,12 @@ function App() {
                       style={{
                         width: '20px',
                         height: '20px',
+                        minWidth: '20px',
+                        minHeight: '20px',
+                        maxWidth: '20px',
+                        maxHeight: '20px',
+                        aspectRatio: '1 / 1',
+                        boxSizing: 'border-box',
                         borderRadius: '50%',
                         border: isSelected ? 'none' : '2px solid var(--card-border)',
                         background: isSelected ? 'var(--primary-color)' : 'transparent',
@@ -6445,7 +6922,7 @@ function App() {
                         flexShrink: 0
                       }}
                     >
-                      {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                      {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} style={{ display: 'block', flexShrink: 0 }} />}
                     </div>
                   </div>
                 );
@@ -6456,6 +6933,246 @@ function App() {
             <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--card-border)', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
               <span>⇄</span>
               <span>Tip: You can also swipe left or right on the Scope bar to switch quickly!</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Details Modal */}
+      {selectedTransactionDetails && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(10, 15, 29, 0.75)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}
+          className="animate-fade-in"
+          onClick={() => setSelectedTransactionDetails(null)}
+        >
+          <div
+            className="glass-card animate-scale-in"
+            style={{
+              maxWidth: '460px',
+              width: '100%',
+              padding: '22px',
+              borderRadius: 'var(--radius-lg)',
+              boxShadow: 'var(--shadow-xl)',
+              border: '1.5px solid var(--card-border)',
+              backgroundColor: 'var(--card-bg, #1e293b)',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              marginBottom: 0
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
+              <h3 style={{ fontSize: '17px', fontWeight: '800', margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)' }}>
+                <ClipboardList size={19} style={{ color: 'var(--primary-color)' }} /> Expense Details
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSelectedTransactionDetails(null)}
+                style={{
+                  background: 'var(--surface-subtle)',
+                  border: '1px solid var(--card-border)',
+                  color: 'var(--text-secondary)',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Total Spent Hero */}
+            <div style={{
+              background: 'var(--surface-subtle)',
+              border: '1px solid var(--card-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: '12.5px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Total Cost
+                </span>
+                <span style={{ fontSize: '26px', fontWeight: '800', color: 'var(--primary-color)' }}>
+                  ৳{(selectedTransactionDetails.cost * selectedTransactionDetails.quantity).toLocaleString()}
+                </span>
+              </div>
+
+              {selectedTransactionDetails.quantity > 1 && (
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                  <span>Unit Price: ৳{selectedTransactionDetails.cost.toLocaleString()}</span>
+                  <span>•</span>
+                  <span>Quantity: {selectedTransactionDetails.quantity}</span>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid var(--card-border)', paddingTop: '10px', marginTop: '2px' }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>
+                  Item Description
+                </div>
+                <div style={{ fontSize: '15.5px', fontWeight: '700', color: 'var(--text-primary)', wordBreak: 'break-word', lineHeight: '1.4' }}>
+                  {selectedTransactionDetails.itemName}
+                </div>
+              </div>
+            </div>
+
+            {/* Info Rows */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* Category */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <Tag size={16} style={{ color: 'var(--primary-color)' }} />
+                  <span>Category</span>
+                </div>
+                {(() => {
+                  const cat = categories.find(c => c.name === selectedTransactionDetails.category);
+                  const color = cat?.color || 'var(--primary-color)';
+                  return (
+                    <span className="badge" style={{ backgroundColor: `${color}20`, color: color, fontWeight: '700', fontSize: '12px' }}>
+                      {selectedTransactionDetails.category}
+                    </span>
+                  );
+                })()}
+              </div>
+
+              {/* Date */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <Calendar size={16} style={{ color: 'var(--primary-color)' }} />
+                  <span>Date</span>
+                </div>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                  {parseLocalDate(selectedTransactionDetails.date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+
+              {/* Scope / Group */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <Users size={16} style={{ color: 'var(--primary-color)' }} />
+                  <span>Scope</span>
+                </div>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                  {selectedTransactionDetails.group ? (
+                    <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary-color)', border: '1px solid var(--primary-border)' }}>
+                      👥 {selectedTransactionDetails.group.name || selectedTransactionDetails.group}
+                    </span>
+                  ) : (
+                    '👤 Personal Expense'
+                  )}
+                </span>
+              </div>
+
+              {/* Added By / Payer */}
+              {selectedTransactionDetails.user && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    <User size={16} style={{ color: 'var(--primary-color)' }} />
+                    <span>Added By</span>
+                  </div>
+                  <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                    {selectedTransactionDetails.user._id === user?.id || selectedTransactionDetails.user === user?.id 
+                      ? 'You (Me)' 
+                      : (selectedTransactionDetails.user.username || 'Member')}
+                  </span>
+                </div>
+              )}
+
+              {/* Original Item Name if shared */}
+              {selectedTransactionDetails.isSharedGroupCost && selectedTransactionDetails.originalItemName && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Original Group Expense Item
+                  </div>
+                  <div style={{ fontSize: '13.5px', fontWeight: '600', color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+                    {selectedTransactionDetails.originalItemName}
+                  </div>
+                </div>
+              )}
+
+              {/* Sync Status */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--card-border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  <CheckCircle size={16} style={{ color: selectedTransactionDetails.isPending ? '#fcd34d' : 'var(--success-color, #10b981)' }} />
+                  <span>Sync Status</span>
+                </div>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: selectedTransactionDetails.isPending ? '#fcd34d' : 'var(--success-color, #10b981)' }}>
+                  {selectedTransactionDetails.isPending ? '⏳ Offline (Pending Sync)' : '✓ Synced with Cloud'}
+                </span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '12px', borderTop: '1px solid var(--card-border)', paddingTop: '16px', marginTop: '4px' }}>
+              {(selectedTransactionDetails.isPending || 
+                selectedTransactionDetails.user?._id === user?.id || 
+                selectedTransactionDetails.user === user?.id || 
+                (selectedTransactionDetails.group && (
+                  selectedTransactionDetails.group.owner?._id === user?.id || 
+                  selectedTransactionDetails.group.owner === user?.id || 
+                  (typeof selectedTransactionDetails.group.owner === 'string' && selectedTransactionDetails.group.owner === user?.id)
+                ))
+              ) && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ 
+                    flex: 1, 
+                    padding: '11px 16px', 
+                    borderRadius: 'var(--radius-sm)', 
+                    fontSize: '13.5px', 
+                    fontWeight: '600', 
+                    cursor: 'pointer', 
+                    color: 'var(--danger-color)', 
+                    borderColor: 'rgba(239, 68, 68, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px'
+                  }}
+                  onClick={() => {
+                    const idToDelete = selectedTransactionDetails._id;
+                    setSelectedTransactionDetails(null);
+                    handleDeleteTransaction(idToDelete);
+                  }}
+                >
+                  <Trash2 size={16} /> Delete Expense
+                </button>
+              )}
+              <button
+                type="button"
+                className="gradient-btn"
+                style={{ flex: 1, padding: '11px 16px', borderRadius: 'var(--radius-sm)', fontSize: '13.5px', fontWeight: '600', border: 'none', cursor: 'pointer' }}
+                onClick={() => setSelectedTransactionDetails(null)}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

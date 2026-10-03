@@ -131,6 +131,8 @@ body {
 #root {
   width: 100%;
   max-width: 480px; /* Mobile viewport container on desktop */
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -138,6 +140,7 @@ body {
   border-left: 1px solid var(--card-border);
   border-right: 1px solid var(--card-border);
   position: relative;
+  overflow: hidden;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
 }
 
@@ -216,19 +219,48 @@ body {
   animation: scopeSlideInLeft 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Flat Custom Scrollbar */
+/* Auto-hiding Scrollbar: invisible by default, visible only while scrolling */
 ::-webkit-scrollbar {
   width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--card-border);
+  background: transparent;
   border-radius: 4px;
+  transition: background-color 0.25s ease;
 }
-::-webkit-scrollbar-thumb:hover {
+
+/* Show thumb when container is actively scrolling */
+.is-scrolling::-webkit-scrollbar-thumb {
+  background: var(--card-border);
+}
+.is-scrolling::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* Standard CSS scrollbar for Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*.is-scrolling {
+  scrollbar-color: var(--card-border) transparent;
+}
+
+/* On desktop devices with mouse hover support */
+@media (hover: hover) and (pointer: fine) {
+  *:hover::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.28);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+  *:hover {
+    scrollbar-color: rgba(148, 163, 184, 0.28) transparent;
+  }
 }
 
 /* Flat Card Component */
@@ -400,6 +432,7 @@ select.form-input option {
   position: sticky;
   top: 0;
   z-index: 100;
+  flex-shrink: 0;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
 }
 
@@ -453,8 +486,34 @@ select.form-input option {
 
 .main-content {
   flex: 1;
-  padding: 16px 20px 84px 20px;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  width: 100%;
+}
+
+/* Tab Slider Track & Panes */
+.tab-slider-track {
+  display: flex;
+  width: 400%;
+  height: 100%;
+  will-change: transform;
+  touch-action: pan-y;
+  transition: transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.tab-pane {
+  width: 25%;
+  min-width: 25%;
+  max-width: 25%;
+  height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px 84px 20px;
+  box-sizing: border-box;
+  touch-action: pan-y;
 }
 
 /* Flat Badges & Alerts */
@@ -466,6 +525,10 @@ select.form-input option {
   font-weight: 600;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alert {
@@ -502,9 +565,12 @@ select.form-input option {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 13px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--card-border);
   transition: background-color var(--transition-fast);
+  min-width: 0;
+  overflow: hidden;
+  gap: 12px;
 }
 
 .transaction-item:last-child {
@@ -519,12 +585,19 @@ select.form-input option {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .transaction-name {
   font-weight: 600;
   font-size: 15px;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .transaction-meta {
@@ -532,6 +605,8 @@ select.form-input option {
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .transaction-amount {
@@ -541,12 +616,28 @@ select.form-input option {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  flex-shrink: 0;
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transaction-amount > span:first-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .transaction-qty {
   font-size: 11px;
   color: var(--text-muted);
   font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* Notification Item Hover */
