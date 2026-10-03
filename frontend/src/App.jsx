@@ -2968,7 +2968,7 @@ function App() {
 
   // Render Main Dashboard & Tracks
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: '100dvh', position: 'relative', overflow: 'hidden' }}>
       
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -3065,6 +3065,7 @@ function App() {
 
         </div>
       </header>
+      <div className="app-header-spacer" />
 
       {/* Notifications Modal (Flat Window Style) */}
       {showNotificationsTray && (
@@ -4321,80 +4322,6 @@ function App() {
                 <PieChart size={16} /> Open Detailed Analytics
               </button>
             </div>
-
-            {/* Floating Multi-Selection Summary Dock */}
-            {selectedHistoryIds.length > 0 && (
-              <div
-                style={{
-                  position: 'fixed',
-                  bottom: '76px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  width: 'calc(100% - 32px)',
-                  maxWidth: '460px',
-                  backgroundColor: 'var(--card-bg)',
-                  border: '1.5px solid var(--primary-color)',
-                  borderRadius: 'var(--radius-lg)',
-                  boxShadow: 'var(--shadow-lg)',
-                  padding: '12px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  zIndex: 90,
-                  backdropFilter: 'blur(8px)',
-                  animation: 'fadeIn 0.2s ease-in-out'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, overflow: 'hidden' }}>
-                  <div
-                    style={{
-                      background: 'var(--primary-color)',
-                      color: '#ffffff',
-                      borderRadius: '50%',
-                      width: '26px',
-                      height: '26px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '12px',
-                      fontWeight: '700',
-                      flexShrink: 0
-                    }}
-                  >
-                    {selectedHistoryIds.length}
-                  </div>
-                  <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Selected Total Spent
-                    </div>
-                    <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${selectedHistoryTotal.toLocaleString()}`}>
-                      ৳{selectedHistoryTotal.toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={clearHistorySelection}
-                  style={{
-                    background: 'var(--surface-subtle)',
-                    border: '1px solid var(--card-border)',
-                    color: 'var(--text-secondary)',
-                    borderRadius: '50%',
-                    width: '32px',
-                    height: '32px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Clear selection"
-                  aria-label="Clear selection"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            )}
             </div>
           </div>
 
@@ -5712,6 +5639,60 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Floating Multi-Selection Summary Dock for History Tab */}
+      {activeTab === 'history' && selectedHistoryIds.length > 0 && (
+        <div className="history-selection-dock">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, overflow: 'hidden' }}>
+            <div
+              style={{
+                background: 'var(--primary-color)',
+                color: '#ffffff',
+                borderRadius: '50%',
+                width: '26px',
+                height: '26px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: '700',
+                flexShrink: 0
+              }}
+            >
+              {selectedHistoryIds.length}
+            </div>
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Selected Total Spent
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`৳${selectedHistoryTotal.toLocaleString()}`}>
+                ৳{selectedHistoryTotal.toLocaleString()}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={clearHistorySelection}
+            style={{
+              background: 'var(--surface-subtle)',
+              border: '1px solid var(--card-border)',
+              color: 'var(--text-secondary)',
+              borderRadius: '50%',
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Mobile Sticky Bottom Tab Bar */}
       <nav className="app-nav">
