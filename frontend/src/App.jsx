@@ -2812,32 +2812,45 @@ function App() {
   // Render Auth UI
   if (!token) {
     return (
-      <div className="main-content animate-fade-in" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '100vh', paddingBottom: '20px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <img 
-            src="/logo.png" 
-            alt="Hisab Khata Logo" 
-            style={{ 
-              width: '68px', 
-              height: '68px', 
-              borderRadius: '16px', 
-              marginBottom: '14px', 
-              objectFit: 'cover',
-              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)' 
-            }} 
-          />
-          <h1 style={{ fontSize: '36px', fontWeight: '800', margin: '0' }} className="app-title">Hisab Khata</h1>
-          <p style={{ color: 'var(--text-secondary)', marginTop: '8px', fontSize: '15px' }}>Track your budget. Sync to Google Sheets.</p>
-        </div>
-
-        {alert && (
-          <div className={`alert alert-${alert.type}`}>
-            <AlertCircle size={18} />
-            <div>{alert.message}</div>
+      <div 
+        className="animate-fade-in" 
+        style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          minHeight: '100vh', 
+          minHeight: '100dvh', 
+          padding: '32px 20px', 
+          width: '100%', 
+          boxSizing: 'border-box', 
+          overflowY: 'auto' 
+        }}
+      >
+        <div style={{ margin: 'auto 0', width: '100%' }}>
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <img 
+              src="/logo.png" 
+              alt="Hisab Khata Logo" 
+              style={{ 
+                width: '68px', 
+                height: '68px', 
+                borderRadius: '16px', 
+                marginBottom: '14px', 
+                objectFit: 'cover',
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)' 
+              }} 
+            />
+            <h1 style={{ fontSize: '36px', fontWeight: '800', margin: '0' }} className="app-title">Hisab Khata</h1>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '8px', fontSize: '15px' }}>Track your budget. Sync to Google Sheets.</p>
           </div>
-        )}
 
-        <div className="glass-card" style={{ padding: '24px' }}>
+          {alert && (
+            <div className={`alert alert-${alert.type}`} style={{ marginBottom: '16px' }}>
+              <AlertCircle size={18} />
+              <div>{alert.message}</div>
+            </div>
+          )}
+
+          <div className="glass-card" style={{ padding: '24px', marginBottom: 0 }}>
           <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', textAlign: 'center' }}>
             {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
           </h2>
@@ -2962,6 +2975,7 @@ function App() {
             </button>
           </div>
         </div>
+      </div>
       </div>
     );
   }
@@ -3098,65 +3112,44 @@ function App() {
           }}>
             {/* Modal Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', borderBottom: '1px solid var(--card-border)', paddingBottom: '12px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Bell size={18} style={{ color: 'var(--primary-color)' }} /> Notifications
-              </h3>
-              
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                {notifications.length > 0 && (
-                  <button
-                    onClick={clearNotifications}
-                    style={{
-                      background: 'var(--danger-bg)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      color: 'var(--danger-color)',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      padding: '6px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      transition: 'background var(--transition-fast)'
-                    }}
-                    title="Delete all notifications permanently"
-                  >
-                    Clear All
-                  </button>
-                )}
-
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Bell size={18} style={{ color: 'var(--primary-color)' }} /> Notifications
+                </h3>
                 {unreadNotificationsCount > 0 && (
-                  <button
-                    onClick={() => markNotificationsAsRead()}
-                    style={{
-                      background: 'var(--primary-light)',
-                      border: '1px solid var(--primary-border)',
-                      color: 'var(--primary-color)',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      padding: '6px 12px',
-                      borderRadius: 'var(--radius-sm)',
-                      transition: 'background var(--transition-fast)'
-                    }}
-                  >
-                    Mark all read
-                  </button>
+                  <span style={{
+                    fontSize: '11px',
+                    backgroundColor: 'var(--primary-light)',
+                    color: 'var(--primary-color)',
+                    border: '1px solid var(--primary-border)',
+                    padding: '1px 7px',
+                    borderRadius: '100px',
+                    fontWeight: '700'
+                  }}>
+                    {unreadNotificationsCount} new
+                  </span>
                 )}
-                
-                <button
-                  onClick={() => setShowNotificationsTray(false)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--text-muted)',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    padding: '4px'
-                  }}
-                >
-                  ✕
-                </button>
               </div>
+              
+              <button
+                type="button"
+                onClick={() => setShowNotificationsTray(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 'var(--radius-sm)'
+                }}
+                aria-label="Close notifications"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
             </div>
 
             {/* Modal Body / Scroll Content */}
@@ -3217,6 +3210,83 @@ function App() {
                   </div>
                 ))
               )}
+            </div>
+
+            {/* Modal Footer: Action buttons placed at bottom */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              marginTop: '16px',
+              paddingTop: '12px',
+              borderTop: '1px solid var(--card-border)',
+              flexShrink: 0,
+              flexWrap: 'wrap'
+            }}>
+              {notifications.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearNotifications}
+                  style={{
+                    background: 'var(--danger-bg)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    color: 'var(--danger-color)',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    transition: 'background var(--transition-fast)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                  title="Delete all notifications permanently"
+                >
+                  <Trash2 size={13} /> Clear All
+                </button>
+              ) : <div />}
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {unreadNotificationsCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => markNotificationsAsRead()}
+                    style={{
+                      background: 'var(--primary-light)',
+                      border: '1px solid var(--primary-border)',
+                      color: 'var(--primary-color)',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      transition: 'background var(--transition-fast)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <Check size={13} /> Mark all read
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowNotificationsTray(false)}
+                  className="secondary-btn"
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
